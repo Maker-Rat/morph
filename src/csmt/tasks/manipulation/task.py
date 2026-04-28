@@ -1,0 +1,1 @@
+"""Manipulation task-family scaffold."""

@@ -1,0 +1,10 @@
+task_family: locomotion
+loss_weights:
+  lambda_rec: 2.5
+  lambda_cycle: 0.1
+  lambda_retar_vel: 500.0
+  lambda_cycle_motion: 0.0
+  joint_limit_threshold: 0.85
+  joint_limit_loss_weight: 0.1
+  lambda_skating: 0.0
+  lambda_grounding: 0.0

@@ -1,0 +1,53 @@
+robot_id: go2_with_arm
+source_xml: assets/robots/go2_with_arm/go2_with_arm.xml
+fk_xml: assets/fk/go2_with_arm_fk.xml
+njoints: 18
+nbodies: 19
+
+# joint_index_reference:
+#   [0] FL_hip_joint
+#   [1] FL_thigh_joint
+#   [2] FL_calf_joint
+#   [3] FR_hip_joint
+#   [4] FR_thigh_joint
+#   [5] FR_calf_joint
+#   [6] RL_hip_joint
+#   [7] RL_thigh_joint
+#   [8] RL_calf_joint
+#   [9] RR_hip_joint
+#   [10] RR_thigh_joint
+#   [11] RR_calf_joint
+#   [12] airbot_j1
+#   [13] airbot_j2
+#   [14] airbot_j3
+#   [15] airbot_j4
+#   [16] airbot_j5
+#   [17] airbot_j6
+# body_index_reference:
+#   [0] trunk
+#   [1] FL_hip
+#   [2] FL_thigh
+#   [3] FL_calf
+#   [4] FR_hip
+#   [5] FR_thigh
+#   [6] FR_calf
+#   [7] RL_hip
+#   [8] RL_thigh
+#   [9] RL_calf
+#   [10] RR_hip
+#   [11] RR_thigh
+#   [12] RR_calf
+#   [13] link1
+#   [14] link2
+#   [15] link3
+#   [16] link4
+#   [17] link5
+#   [18] link6
+joint_limits:
+  lower: [-1.0472, -1.5708, -2.7227, -1.0472, -1.5708, -2.7227, -1.0472, -0.5236,
+    -2.7227, -1.0472, -0.5236, -2.7227, -3.1416, -2.9671, -0.087266, -3.0107, -1.7628,
+    -3.0107]
+  upper: [1.0472, 3.4907, -0.83776, 1.0472, 3.4907, -0.83776, 1.0472, 4.5379, -0.83776,
+    1.0472, 4.5379, -0.83776, 2.0944, 0.17453, 3.1416, 3.0107, 1.7628, 3.0107]
+  source: xml_range
+base_body: trunk

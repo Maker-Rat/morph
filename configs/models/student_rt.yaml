@@ -1,0 +1,12 @@
+model_name: student_rt
+hist_len: 24
+prev_len: 2
+conv_channels: 128
+gru_hidden: 256
+conv_kernel: 3
+conv_dropout: 0.1
+batch_size: 256
+epochs: 70
+lambda_smooth: 0.1
+lr: 0.001
+weight_decay: 0.0001

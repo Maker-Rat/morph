@@ -1,0 +1,83 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mujoco model="go2_with_arm_barebones">
+  <compiler angle="radian" />
+  <default>
+    <joint type="hinge" />
+  </default>
+  <worldbody>
+    <body name="trunk" pos="0 0 0.445">
+      <body name="FL_hip" pos="0.1934 0.0465 0">
+        <inertial pos="-0.0054 0.00194 -0.000105" quat="0.497014 0.499245 0.505462 0.498237" mass="0.678" diaginertia="0.00088403 0.000596003 0.000479967" />
+        <joint name="FL_hip_joint" pos="0 0 0" axis="1 0 0" range="-1.0472 1.0472" type="hinge" />
+        <body name="FL_thigh" pos="0 0.0955 0">
+          <inertial pos="-0.00374 -0.0223 -0.0327" quat="0.829533 0.0847635 -0.0200632 0.551623" mass="1.152" diaginertia="0.00594973 0.00584149 0.000878787" />
+          <joint name="FL_thigh_joint" pos="0 0 0" axis="0 1 0" range="-1.5708 3.4907" type="hinge" />
+          <body name="FL_calf" pos="0 0 -0.213">
+            <inertial pos="0.00629595 -0.000622121 -0.141417" quat="0.710749 0.00140574 -0.00463741 0.703429" mass="0.241352" diaginertia="0.0014901 0.00146367 5.30286e-05" />
+            <joint name="FL_calf_joint" pos="0 0 0" axis="0 1 0" range="-2.7227 -0.83776" type="hinge" />
+          </body>
+        </body>
+      </body>
+      <body name="FR_hip" pos="0.1934 -0.0465 0">
+        <inertial pos="-0.0054 -0.00194 -0.000105" quat="0.498237 0.505462 0.499245 0.497014" mass="0.678" diaginertia="0.00088403 0.000596003 0.000479967" />
+        <joint name="FR_hip_joint" pos="0 0 0" axis="1 0 0" range="-1.0472 1.0472" type="hinge" />
+        <body name="FR_thigh" pos="0 -0.0955 0">
+          <inertial pos="-0.00374 0.0223 -0.0327" quat="0.551623 -0.0200632 0.0847635 0.829533" mass="1.152" diaginertia="0.00594973 0.00584149 0.000878787" />
+          <joint name="FR_thigh_joint" pos="0 0 0" axis="0 1 0" range="-1.5708 3.4907" type="hinge" />
+          <body name="FR_calf" pos="0 0 -0.213">
+            <inertial pos="0.00629595 0.000622121 -0.141417" quat="0.703429 -0.00463741 0.00140574 0.710749" mass="0.241352" diaginertia="0.0014901 0.00146367 5.30286e-05" />
+            <joint name="FR_calf_joint" pos="0 0 0" axis="0 1 0" range="-2.7227 -0.83776" type="hinge" />
+          </body>
+        </body>
+      </body>
+      <body name="RL_hip" pos="-0.1934 0.0465 0">
+        <inertial pos="0.0054 0.00194 -0.000105" quat="0.505462 0.498237 0.497014 0.499245" mass="0.678" diaginertia="0.00088403 0.000596003 0.000479967" />
+        <joint name="RL_hip_joint" pos="0 0 0" axis="1 0 0" range="-1.0472 1.0472" type="hinge" />
+        <body name="RL_thigh" pos="0 0.0955 0">
+          <inertial pos="-0.00374 -0.0223 -0.0327" quat="0.829533 0.0847635 -0.0200632 0.551623" mass="1.152" diaginertia="0.00594973 0.00584149 0.000878787" />
+          <joint name="RL_thigh_joint" pos="0 0 0" axis="0 1 0" range="-0.5236 4.5379" type="hinge" />
+          <body name="RL_calf" pos="0 0 -0.213">
+            <inertial pos="0.00629595 -0.000622121 -0.141417" quat="0.710749 0.00140574 -0.00463741 0.703429" mass="0.241352" diaginertia="0.0014901 0.00146367 5.30286e-05" />
+            <joint name="RL_calf_joint" pos="0 0 0" axis="0 1 0" range="-2.7227 -0.83776" type="hinge" />
+          </body>
+        </body>
+      </body>
+      <body name="RR_hip" pos="-0.1934 -0.0465 0">
+        <inertial pos="0.0054 -0.00194 -0.000105" quat="0.499245 0.497014 0.498237 0.505462" mass="0.678" diaginertia="0.00088403 0.000596003 0.000479967" />
+        <joint name="RR_hip_joint" pos="0 0 0" axis="1 0 0" range="-1.0472 1.0472" type="hinge" />
+        <body name="RR_thigh" pos="0 -0.0955 0">
+          <inertial pos="-0.00374 0.0223 -0.0327" quat="0.551623 -0.0200632 0.0847635 0.829533" mass="1.152" diaginertia="0.00594973 0.00584149 0.000878787" />
+          <joint name="RR_thigh_joint" pos="0 0 0" axis="0 1 0" range="-0.5236 4.5379" type="hinge" />
+          <body name="RR_calf" pos="0 0 -0.213">
+            <inertial pos="0.00629595 0.000622121 -0.141417" quat="0.703429 -0.00463741 0.00140574 0.710749" mass="0.241352" diaginertia="0.0014901 0.00146367 5.30286e-05" />
+            <joint name="RR_calf_joint" pos="0 0 0" axis="0 1 0" range="-2.7227 -0.83776" type="hinge" />
+          </body>
+        </body>
+      </body>
+      <body name="link1" pos="0 0 0.1927">
+        <inertial pos="0.00014396 -0.00098536 -0.020968" quat="0.996851 -0.00552866 0.00131697 0.0790989" mass="0.607" diaginertia="0.00111427 0.00101111 0.000386618" />
+        <joint name="airbot_j1" pos="0 0 0" axis="0 0 1" range="-3.1416 2.0944" ref="0" type="hinge" />
+        <body name="link2" quat="0.135867 0.135871 -0.693931 0.69393">
+          <inertial pos="0.13769 0.012537 0.0044739" quat="0.544986 0.469715 0.519549 0.460898" mass="0.918" diaginertia="0.034835 0.0346192 0.000895232" />
+          <joint name="airbot_j2" pos="0 0 0" axis="0 0 1" range="-2.9671 0.17453" ref="0" type="hinge" />
+          <body name="link3" pos="0.27009 0 0" quat="0.55806 0 0 0.8298">
+            <inertial pos="1.5134e-05 0.10706 0.0082136" quat="0.709512 0.704687 -0.00192851 0.00241143" mass="0.7" diaginertia="0.015659 0.0154817 0.000458584" />
+            <joint name="airbot_j3" pos="0 0 0" axis="0 0 1" range="-0.087266 3.1416" ref="0" type="hinge" />
+            <body name="link4" pos="0 0.29015 0" quat="0.499998 -0.5 -0.5 -0.500002">
+              <inertial pos="-1.6216e-05 0.002995 -0.019407" quat="0.705825 -0.00378066 0.00351614 0.708367" mass="0.359" diaginertia="0.000529292 0.00051773 0.000136768" />
+              <joint name="airbot_j4" pos="0 0 0" axis="0 0 1" range="-3.0107 3.0107" ref="0" type="hinge" />
+              <body name="link5" quat="0.707105 0.707108 0 0">
+                <inertial pos="-4.5037e-05 0.033144 0.0024106" quat="0.686719 0.726921 0.000986816 -0.00117372" mass="0.403" diaginertia="0.0011602 0.00108734 0.000239772" />
+                <joint name="airbot_j5" pos="0 0 0" axis="0 0 1" range="-1.7628 1.7628" ref="0" type="hinge" />
+                <body name="link6" quat="0.707105 -0.707108 0 0">
+                  <inertial pos="0.026506 -0.00225434 0.0977072" quat="0.617562 -0.262889 -0.218718 0.708286" mass="0.725017" diaginertia="0.00753741 0.00658349 0.00146808" />
+                  <joint name="airbot_j6" pos="0 0 0" axis="0 0 1" range="-3.0107 3.0107" ref="0" type="hinge" />
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>

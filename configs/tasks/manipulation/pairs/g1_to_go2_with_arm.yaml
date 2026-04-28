@@ -1,0 +1,37 @@
+pair_id: g1_to_go2_with_arm
+task_family: manipulation
+src_robot: g1
+dst_robot: go2_with_arm
+correspondence:
+  body_groups:
+  - name: back_legs
+    src_body_indices: [1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15]
+    dst_body_indices: [7, 8, 9, 10, 11, 12]
+  - name: front_left
+    src_body_indices: [22, 23, 24, 25]
+    dst_body_indices: [1, 2, 3]
+  - name: front_right
+    src_body_indices: [30, 31, 32, 33]
+    dst_body_indices: [4, 5, 6]
+  - name: arm_todo
+    src_body_indices: []
+    dst_body_indices: [13, 14, 15, 16, 17, 18]
+  joint_groups:
+  - name: back_legs
+    src_joint_indices: [0, 1, 2, 3, 6, 7, 8, 9]
+    dst_joint_indices: [6, 7, 8, 9, 10, 11]
+  - name: front_left
+    src_joint_indices: [15, 16, 17, 18]
+    dst_joint_indices: [0, 1, 2]
+  - name: front_right
+    src_joint_indices: [22, 23, 24, 25]
+    dst_joint_indices: [3, 4, 5]
+  - name: arm_todo
+    src_joint_indices: []
+    dst_joint_indices: [12, 13, 14, 15, 16, 17]
+loss_overrides: {}
+indices:
+  src_feet: [7, 15]
+  dst_feet: [9, 12]
+  src_ee: [29, 37]
+  dst_ee: [3, 6]

@@ -1,0 +1,52 @@
+robot_id: yuna
+source_xml: assets/robots/yuna/yuna_new.xml
+fk_xml: assets/fk/yuna_fk.xml
+njoints: 18
+nbodies: 19
+
+# joint_index_reference:
+#   [0] 1FL_base
+#   [1] 1FL_shoulder
+#   [2] 1FL_elbow
+#   [3] 2FR_base
+#   [4] 2FR_shoulder
+#   [5] 2FR_elbow
+#   [6] 3ML_base
+#   [7] 3ML_shoulder
+#   [8] 3ML_elbow
+#   [9] 4MR_base
+#   [10] 4MR_shoulder
+#   [11] 4MR_elbow
+#   [12] 5BL_base
+#   [13] 5BL_shoulder
+#   [14] 5BL_elbow
+#   [15] 6BR_base
+#   [16] 6BR_shoulder
+#   [17] 6BR_elbow
+# body_index_reference:
+#   [0] base
+#   [1] base_1FL_shoulder
+#   [2] shoulder_1FL_tube
+#   [3] elbow_1FL_tube
+#   [4] base_2FR_shoulder
+#   [5] shoulder_2FR_tube
+#   [6] elbow_2FR_tube
+#   [7] base_3ML_shoulder
+#   [8] shoulder_3ML_tube
+#   [9] elbow_3ML_tube
+#   [10] base_4MR_shoulder
+#   [11] shoulder_4MR_tube
+#   [12] elbow_4MR_tube
+#   [13] base_5BL_shoulder
+#   [14] shoulder_5BL_tube
+#   [15] elbow_5BL_tube
+#   [16] base_6BR_shoulder
+#   [17] shoulder_6BR_tube
+#   [18] elbow_6BR_tube
+joint_limits:
+  lower: [-3.14, -3.14, -3.14, -3.14, -3.14, -3.14, -3.14, -3.14, -3.14, -3.14, -3.14,
+    -3.14, -3.14, -3.14, -3.14, -3.14, -3.14, -3.14]
+  upper: [3.14, 3.14, 3.14, 3.14, 3.14, 3.14, 3.14, 3.14, 3.14, 3.14, 3.14, 3.14,
+    3.14, 3.14, 3.14, 3.14, 3.14, 3.14]
+  source: xml_effective_range
+base_body: base

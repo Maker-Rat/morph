@@ -1,0 +1,85 @@
+robot_id: g1
+source_xml: assets/robots/unitree_g1/g1_mocap_29dof.xml
+fk_xml: assets/fk/g1_fk.xml
+njoints: 29
+nbodies: 38
+
+# joint_index_reference:
+#   [0] left_hip_pitch_joint
+#   [1] left_hip_roll_joint
+#   [2] left_hip_yaw_joint
+#   [3] left_knee_joint
+#   [4] left_ankle_pitch_joint
+#   [5] left_ankle_roll_joint
+#   [6] right_hip_pitch_joint
+#   [7] right_hip_roll_joint
+#   [8] right_hip_yaw_joint
+#   [9] right_knee_joint
+#   [10] right_ankle_pitch_joint
+#   [11] right_ankle_roll_joint
+#   [12] waist_yaw_joint
+#   [13] waist_roll_joint
+#   [14] waist_pitch_joint
+#   [15] left_shoulder_pitch_joint
+#   [16] left_shoulder_roll_joint
+#   [17] left_shoulder_yaw_joint
+#   [18] left_elbow_joint
+#   [19] left_wrist_roll_joint
+#   [20] left_wrist_pitch_joint
+#   [21] left_wrist_yaw_joint
+#   [22] right_shoulder_pitch_joint
+#   [23] right_shoulder_roll_joint
+#   [24] right_shoulder_yaw_joint
+#   [25] right_elbow_joint
+#   [26] right_wrist_roll_joint
+#   [27] right_wrist_pitch_joint
+#   [28] right_wrist_yaw_joint
+# body_index_reference:
+#   [0] pelvis
+#   [1] left_hip_pitch_link
+#   [2] left_hip_roll_link
+#   [3] left_hip_yaw_link
+#   [4] left_knee_link
+#   [5] left_ankle_pitch_link
+#   [6] left_ankle_roll_link
+#   [7] left_toe_link
+#   [8] pelvis_contour_link
+#   [9] right_hip_pitch_link
+#   [10] right_hip_roll_link
+#   [11] right_hip_yaw_link
+#   [12] right_knee_link
+#   [13] right_ankle_pitch_link
+#   [14] right_ankle_roll_link
+#   [15] right_toe_link
+#   [16] waist_yaw_link
+#   [17] waist_roll_link
+#   [18] torso_link
+#   [19] head_link
+#   [20] head_mocap
+#   [21] imu_in_torso
+#   [22] left_shoulder_pitch_link
+#   [23] left_shoulder_roll_link
+#   [24] left_shoulder_yaw_link
+#   [25] left_elbow_link
+#   [26] left_wrist_roll_link
+#   [27] left_wrist_pitch_link
+#   [28] left_wrist_yaw_link
+#   [29] left_rubber_hand
+#   [30] right_shoulder_pitch_link
+#   [31] right_shoulder_roll_link
+#   [32] right_shoulder_yaw_link
+#   [33] right_elbow_link
+#   [34] right_wrist_roll_link
+#   [35] right_wrist_pitch_link
+#   [36] right_wrist_yaw_link
+#   [37] right_rubber_hand
+joint_limits:
+  lower: [-1.57, -0.5236, -1.57, -0.087267, -0.87267, -0.2618, -1.57, -1.57, -1.57,
+    -0.087267, -0.87267, -0.2618, -1.57, -0.52, -0.52, -3.0892, -0.6, -1.4, -1.0472,
+    -1.97222, -1.61443, -1.61443, -3.0892, -2.2515, -2.0, -1.0472, -1.97222, -1.61443,
+    -1.61443]
+  upper: [1.57, 1.57, 1.57, 2.8798, 0.5236, 0.2618, 1.57, 0.5236, 1.57, 2.8798, 0.5236,
+    0.2618, 1.57, 0.52, 0.52, 1.149, 2.2515, 2.0, 1.7, 1.97222, 1.61443, 1.61443,
+    1.149, 0.6, 1.4, 1.7, 1.97222, 1.61443, 1.61443]
+  source: xml_effective_range
+base_body: pelvis

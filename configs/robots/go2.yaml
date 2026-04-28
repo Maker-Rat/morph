@@ -1,0 +1,40 @@
+robot_id: go2
+source_xml: assets/robots/unitree_go2/go2.xml
+fk_xml: assets/fk/go2_fk.xml
+njoints: 12
+nbodies: 13
+
+# joint_index_reference:
+#   [0] FR_hip_joint
+#   [1] FR_thigh_joint
+#   [2] FR_calf_joint
+#   [3] FL_hip_joint
+#   [4] FL_thigh_joint
+#   [5] FL_calf_joint
+#   [6] RR_hip_joint
+#   [7] RR_thigh_joint
+#   [8] RR_calf_joint
+#   [9] RL_hip_joint
+#   [10] RL_thigh_joint
+#   [11] RL_calf_joint
+# body_index_reference:
+#   [0] base
+#   [1] FR_hip
+#   [2] FR_thigh
+#   [3] FR_calf
+#   [4] FL_hip
+#   [5] FL_thigh
+#   [6] FL_calf
+#   [7] RR_hip
+#   [8] RR_thigh
+#   [9] RR_calf
+#   [10] RL_hip
+#   [11] RL_thigh
+#   [12] RL_calf
+joint_limits:
+  lower: [-1.0472, -1.5708, -2.7227, -1.0472, -1.5708, -2.7227, -1.0472, -0.5236,
+    -2.7227, -1.0472, -0.5236, -2.7227]
+  upper: [1.0472, 3.4907, -0.83776, 1.0472, 3.4907, -0.83776, 1.0472, 4.5379, -0.83776,
+    1.0472, 4.5379, -0.83776]
+  source: xml_effective_range
+base_body: base

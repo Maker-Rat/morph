@@ -1,0 +1,16 @@
+model_name: teacher_pan
+architecture: pan
+use_vae: false
+architecture_name: pan
+batch_size: 64
+epoch_num: 3001
+epoch_begin: 0
+save_iter: 200
+print_iter: 10
+optimizer: Adam
+lr_g: 0.0001
+lr_d: 0.0001
+dis_mode: denorm_rotation
+quat_loss_type: geodesic
+retar_vel_matching: direct
+rec_loss_type: norm_rec

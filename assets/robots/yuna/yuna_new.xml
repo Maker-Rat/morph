@@ -1,0 +1,126 @@
+<mujoco model="yuna">
+  <compiler angle="radian" meshdir="meshes" />
+  <asset>
+    <mesh name="T8" content_type="model/stl" file="T8.stl" />
+  </asset>
+  <worldbody>
+    <body name="base" pos="0 0 0">
+      <freejoint name="root" />
+      <geom size="0.08 0.075 0.09" pos="0 0 0.06" type="box" rgba="0.1 0.1 0.1 1" />
+      <geom size="0.0158 0.063" pos="0.1209 -0.06985 -0.02" quat="0.68303 0.183012 0.682998 -0.183003" type="cylinder" rgba="0.1 0.1 0.1 1" />
+      <geom size="0.0158 0.063" pos="0.1209 0.06985 -0.02" quat="0.68303 -0.183012 0.682998 0.183003" type="cylinder" rgba="0.1 0.1 0.1 1" />
+      <geom size="0.0158 0.063" pos="-0.1209 0.06985 -0.02" quat="0.68303 0.183012 0.682998 -0.183003" type="cylinder" rgba="0.1 0.1 0.1 1" />
+      <geom size="0.0158 0.063" pos="-0.1209 -0.06985 -0.02" quat="0.68303 -0.183012 0.682998 0.183003" type="cylinder" rgba="0.1 0.1 0.1 1" />
+      <geom size="0.0158 0.038" pos="0 0.1147 -0.02" quat="0.500023 0.5 0.5 -0.499977" type="cylinder" rgba="0.1 0.1 0.1 1" />
+      <geom size="0.0158 0.038" pos="0 -0.1147 -0.02" quat="0.500023 0.5 0.5 -0.499977" type="cylinder" rgba="0.1 0.1 0.1 1" />
+      <geom pos="0.225166 0.13 0" quat="0.965926 0 0 0.25882" type="mesh" rgba="0.91 0.43 0.218 1" mesh="T8" />
+      <geom pos="0.225166 -0.13 0" quat="0.965926 0 0 -0.25882" type="mesh" rgba="0.91 0.43 0.218 1" mesh="T8" />
+      <geom pos="-8.81569e-07 0.24 0" quat="0.707105 0 0 0.707108" type="mesh" rgba="0.91 0.43 0.218 1" mesh="T8" />
+      <geom pos="-8.81569e-07 -0.24 0" quat="0.707105 0 0 -0.707108" type="mesh" rgba="0.91 0.43 0.218 1" mesh="T8" />
+      <geom pos="-0.225167 0.129999 0" quat="0.258816 0 0 0.965927" type="mesh" rgba="0.91 0.43 0.218 1" mesh="T8" />
+      <geom pos="-0.225167 -0.129999 0" quat="0.258816 0 0 -0.965927" type="mesh" rgba="0.91 0.43 0.218 1" mesh="T8" />
+      <body name="base_1FL_shoulder" pos="0.225166 0.13 0.0475" quat="0.965926 0 0 0.25882">
+        <inertial pos="0.025037 0.000167526 0.019435" quat="-0.245347 0.741975 0.26607 0.564344" mass="0.79" diaginertia="0.00101903 0.000877696 0.000606846" />
+        <joint name="1FL_base" pos="0 0 0" axis="0 0 1" range="-3.14 3.14" actuatorfrcrange="-60 60" />
+        <geom pos="0 -0.0225 0.055" quat="0.707109 -0.707105 0 0" type="mesh" rgba="0.91 0.43 0.218 1" mesh="T8" />
+        <body name="shoulder_1FL_tube" pos="0 0.025 0.0550003" quat="0.707109 -0.707105 0 0">
+          <inertial pos="0.079914 0.0219432 0.211241" quat="0.682659 -0.198291 -0.120964 0.692838" mass="0.977" diaginertia="0.0339682 0.0309709 0.00340561" />
+          <joint name="1FL_shoulder" pos="0 0 0" axis="0 0 1" range="-3.14 3.14" actuatorfrcrange="-60 60" />
+          <geom size="0.016 0.1498" pos="0.1625 0 0.02" quat="0.707123 0 0.70709 0" type="cylinder" rgba="0.1 0.1 0.1 1" />
+          <geom pos="0.325 0 0" quat="1.32679e-06 1 0 0" type="mesh" rgba="0.91 0.43 0.218 1" mesh="T8" />
+          <body name="elbow_1FL_tube" pos="0.325 -1.26046e-07 -0.0475" quat="1.32679e-06 1 0 0">
+            <inertial pos="0.183604 0 0.02" quat="0.5 0.5 0.5 0.5" mass="0.462" diaginertia="0.00523745 0.00523745 0.0003204" />
+            <joint name="1FL_elbow" pos="0 0 0" axis="0 0 1" range="-3.14 3.14" actuatorfrcrange="-60 60" />
+            <geom size="0.016 0.1498" pos="0.1625 0 0.02" quat="0.707123 0 0.70709 0" type="cylinder" rgba="0.1 0.1 0.1 1" />
+            <geom size="0.016 0.0005" pos="0.3255 0 0.02" quat="0.707107 2.23686e-06 0.707107 2.23686e-06" type="cylinder" />
+          </body>
+        </body>
+      </body>
+      <body name="base_2FR_shoulder" pos="0.225166 -0.13 0.0475" quat="0.965926 0 0 -0.25882">
+        <inertial pos="0.0164411 -0.0249092 0.0244779" quat="0.487469 0.615384 -0.357621 0.505751" mass="0.79" diaginertia="0.00124422 0.00111171 0.000599401" />
+        <joint name="2FR_base" pos="0 0 0" axis="0 0 1" range="-3.14 3.14" actuatorfrcrange="-60 60" />
+        <geom pos="0 0.0225 0.055" quat="0.707109 0.707105 0 0" type="mesh" rgba="0.91 0.43 0.218 1" mesh="T8" />
+        <body name="shoulder_2FR_tube" pos="0 -0.025 0.0550003" quat="0.707109 0.707105 0 0">
+          <inertial pos="0.079914 0.0219432 0.211241" quat="0.682659 -0.198291 -0.120964 0.692838" mass="0.977" diaginertia="0.0339682 0.0309709 0.00340561" />
+          <joint name="2FR_shoulder" pos="0 0 0" axis="0 0 1" range="-3.14 3.14" actuatorfrcrange="-60 60" />
+          <geom size="0.016 0.1498" pos="0.1625 0 0.02" quat="0.707123 0 0.70709 0" type="cylinder" rgba="0.1 0.1 0.1 1" />
+          <geom pos="0.325 0 0" quat="1.32679e-06 1 0 0" type="mesh" rgba="0.91 0.43 0.218 1" mesh="T8" />
+          <body name="elbow_2FR_tube" pos="0.325 -1.26046e-07 -0.0475" quat="1.32679e-06 1 0 0">
+            <inertial pos="0.183604 0 0.02" quat="0.5 0.5 0.5 0.5" mass="0.462" diaginertia="0.00523745 0.00523745 0.0003204" />
+            <joint name="2FR_elbow" pos="0 0 0" axis="0 0 1" range="-3.14 3.14" actuatorfrcrange="-60 60" />
+            <geom size="0.016 0.1498" pos="0.1625 0 0.02" quat="0.707123 0 0.70709 0" type="cylinder" rgba="0.1 0.1 0.1 1" />
+            <geom size="0.016 0.0005" pos="0.3255 0 0.02" quat="0.707107 2.23686e-06 0.707107 2.23686e-06" type="cylinder" />
+          </body>
+        </body>
+      </body>
+      <body name="base_3ML_shoulder" pos="-8.81569e-07 0.24 0.0475" quat="0.707105 0 0 0.707108">
+        <inertial pos="0.025037 0.000167526 0.019435" quat="-0.245347 0.741975 0.26607 0.564344" mass="0.79" diaginertia="0.00101903 0.000877696 0.000606846" />
+        <joint name="3ML_base" pos="0 0 0" axis="0 0 1" range="-3.14 3.14" actuatorfrcrange="-60 60" />
+        <geom pos="0 -0.0225 0.055" quat="0.707109 -0.707105 0 0" type="mesh" rgba="0.91 0.43 0.218 1" mesh="T8" />
+        <body name="shoulder_3ML_tube" pos="0 0.025 0.0550003" quat="0.707109 -0.707105 0 0">
+          <inertial pos="0.079914 0.0219432 0.211241" quat="0.682659 -0.198291 -0.120964 0.692838" mass="0.977" diaginertia="0.0339682 0.0309709 0.00340561" />
+          <joint name="3ML_shoulder" pos="0 0 0" axis="0 0 1" range="-3.14 3.14" actuatorfrcrange="-60 60" />
+          <geom size="0.016 0.1498" pos="0.1625 0 0.02" quat="0.707123 0 0.70709 0" type="cylinder" rgba="0.1 0.1 0.1 1" />
+          <geom pos="0.325 0 0" quat="1.32679e-06 1 0 0" type="mesh" rgba="0.91 0.43 0.218 1" mesh="T8" />
+          <body name="elbow_3ML_tube" pos="0.325 -1.26046e-07 -0.0475" quat="1.32679e-06 1 0 0">
+            <inertial pos="0.183604 0 0.02" quat="0.5 0.5 0.5 0.5" mass="0.462" diaginertia="0.00523745 0.00523745 0.0003204" />
+            <joint name="3ML_elbow" pos="0 0 0" axis="0 0 1" range="-3.14 3.14" actuatorfrcrange="-60 60" />
+            <geom size="0.016 0.1498" pos="0.1625 0 0.02" quat="0.707123 0 0.70709 0" type="cylinder" rgba="0.1 0.1 0.1 1" />
+            <geom size="0.016 0.0005" pos="0.3255 -3e-09 0.02" quat="0.707107 4.35818e-06 0.707107 1.15539e-07" type="cylinder" />
+          </body>
+        </body>
+      </body>
+      <body name="base_4MR_shoulder" pos="-8.81569e-07 -0.24 0.0475" quat="0.707105 0 0 -0.707108">
+        <inertial pos="0.0164411 -0.0249092 0.0244779" quat="0.487469 0.615384 -0.357621 0.505751" mass="0.79" diaginertia="0.00124422 0.00111171 0.000599401" />
+        <joint name="4MR_base" pos="0 0 0" axis="0 0 1" range="-3.14 3.14" actuatorfrcrange="-60 60" />
+        <geom pos="0 0.0225 0.055" quat="0.707109 0.707105 0 0" type="mesh" rgba="0.91 0.43 0.218 1" mesh="T8" />
+        <body name="shoulder_4MR_tube" pos="0 -0.025 0.0550003" quat="0.707109 0.707105 0 0">
+          <inertial pos="0.079914 0.0219432 0.211241" quat="0.682659 -0.198291 -0.120964 0.692838" mass="0.977" diaginertia="0.0339682 0.0309709 0.00340561" />
+          <joint name="4MR_shoulder" pos="0 0 0" axis="0 0 1" range="-3.14 3.14" actuatorfrcrange="-60 60" />
+          <geom size="0.016 0.1498" pos="0.1625 0 0.02" quat="0.707123 0 0.70709 0" type="cylinder" rgba="0.1 0.1 0.1 1" />
+          <geom pos="0.325 0 0" quat="1.32679e-06 1 0 0" type="mesh" rgba="0.91 0.43 0.218 1" mesh="T8" />
+          <body name="elbow_4MR_tube" pos="0.325 -1.26046e-07 -0.0475" quat="1.32679e-06 1 0 0">
+            <inertial pos="0.183604 0 0.02" quat="0.5 0.5 0.5 0.5" mass="0.462" diaginertia="0.00523745 0.00523745 0.0003204" />
+            <joint name="4MR_elbow" pos="0 0 0" axis="0 0 1" range="-3.14 3.14" actuatorfrcrange="-60 60" />
+            <geom size="0.016 0.1498" pos="0.1625 0 0.02" quat="0.707123 0 0.70709 0" type="cylinder" rgba="0.1 0.1 0.1 1" />
+            <geom size="0.016 0.0005" pos="0.3255 0 0.02" quat="0.707107 2.23686e-06 0.707107 2.23686e-06" type="cylinder" />
+          </body>
+        </body>
+      </body>
+      <body name="base_5BL_shoulder" pos="-0.225167 0.129999 0.0475" quat="0.258816 0 0 0.965927">
+        <inertial pos="0.025037 0.000167526 0.019435" quat="-0.245347 0.741975 0.26607 0.564344" mass="0.79" diaginertia="0.00101903 0.000877696 0.000606846" />
+        <joint name="5BL_base" pos="0 0 0" axis="0 0 1" range="-3.14 3.14" actuatorfrcrange="-60 60" />
+        <geom pos="0 -0.0225 0.055" quat="0.707109 -0.707105 0 0" type="mesh" rgba="0.91 0.43 0.218 1" mesh="T8" />
+        <body name="shoulder_5BL_tube" pos="0 0.025 0.0550003" quat="0.707109 -0.707105 0 0">
+          <inertial pos="0.079914 0.0219432 0.211241" quat="0.682659 -0.198291 -0.120964 0.692838" mass="0.977" diaginertia="0.0339682 0.0309709 0.00340561" />
+          <joint name="5BL_shoulder" pos="0 0 0" axis="0 0 1" range="-3.14 3.14" actuatorfrcrange="-60 60" />
+          <geom size="0.016 0.1498" pos="0.1625 0 0.02" quat="0.707123 0 0.70709 0" type="cylinder" rgba="0.1 0.1 0.1 1" />
+          <geom pos="0.325 0 0" quat="1.32679e-06 1 0 0" type="mesh" rgba="0.91 0.43 0.218 1" mesh="T8" />
+          <body name="elbow_5BL_tube" pos="0.325 -1.26046e-07 -0.0475" quat="1.32679e-06 1 0 0">
+            <inertial pos="0.183604 0 0.02" quat="0.5 0.5 0.5 0.5" mass="0.462" diaginertia="0.00523745 0.00523745 0.0003204" />
+            <joint name="5BL_elbow" pos="0 0 0" axis="0 0 1" range="-3.14 3.14" actuatorfrcrange="-60 60" />
+            <geom size="0.016 0.1498" pos="0.1625 0 0.02" quat="0.707123 0 0.70709 0" type="cylinder" rgba="0.1 0.1 0.1 1" />
+            <geom size="0.016 0.0005" pos="0.3255 0 0.02" quat="0.707107 2.23686e-06 0.707107 2.23686e-06" type="cylinder" />
+          </body>
+        </body>
+      </body>
+      <body name="base_6BR_shoulder" pos="-0.225167 -0.129999 0.0475" quat="0.258816 0 0 -0.965927">
+        <inertial pos="0.0164411 -0.0249092 0.0244779" quat="0.487469 0.615384 -0.357621 0.505751" mass="0.79" diaginertia="0.00124422 0.00111171 0.000599401" />
+        <joint name="6BR_base" pos="0 0 0" axis="0 0 1" range="-3.14 3.14" actuatorfrcrange="-60 60" />
+        <geom pos="0 0.0225 0.055" quat="0.707109 0.707105 0 0" type="mesh" rgba="0.91 0.43 0.218 1" mesh="T8" />
+        <body name="shoulder_6BR_tube" pos="0 -0.025 0.0550003" quat="0.707109 0.707105 0 0">
+          <inertial pos="0.079914 0.0219432 0.211241" quat="0.682659 -0.198291 -0.120964 0.692838" mass="0.977" diaginertia="0.0339682 0.0309709 0.00340561" />
+          <joint name="6BR_shoulder" pos="0 0 0" axis="0 0 1" range="-3.14 3.14" actuatorfrcrange="-60 60" />
+          <geom size="0.016 0.1498" pos="0.1625 0 0.02" quat="0.707123 0 0.70709 0" type="cylinder" rgba="0.1 0.1 0.1 1" />
+          <geom pos="0.325 0 0" quat="1.32679e-06 1 0 0" type="mesh" rgba="0.91 0.43 0.218 1" mesh="T8" />
+          <body name="elbow_6BR_tube" pos="0.325 -1.26046e-07 -0.0475" quat="1.32679e-06 1 0 0">
+            <inertial pos="0.183604 0 0.02" quat="0.5 0.5 0.5 0.5" mass="0.462" diaginertia="0.00523745 0.00523745 0.0003204" />
+            <joint name="6BR_elbow" pos="0 0 0" axis="0 0 1" range="-3.14 3.14" actuatorfrcrange="-60 60" />
+            <geom size="0.016 0.1498" pos="0.1625 0 0.02" quat="0.707123 0 0.70709 0" type="cylinder" rgba="0.1 0.1 0.1 1" />
+            <geom size="0.016 0.0005" pos="0.3255 0 0.02" quat="0.707107 2.23686e-06 0.707107 2.23686e-06" type="cylinder" />
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>

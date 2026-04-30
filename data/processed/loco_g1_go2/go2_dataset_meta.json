@@ -4,8 +4,8 @@
     "stats_path": "/home/marmot/Ritwik/morph/data/processed/loco_g1_go2/go2_stats.npz",
     "train_path": "/home/marmot/Ritwik/morph/data/processed/loco_g1_go2/go2_train.npz",
     "test_path": "/home/marmot/Ritwik/morph/data/processed/loco_g1_go2/go2_test.npz",
-    "total_windows": 1130,
-    "train_windows": 904,
-    "test_windows": 226
+    "total_windows": 2245,
+    "train_windows": 1796,
+    "test_windows": 449
   }
 }

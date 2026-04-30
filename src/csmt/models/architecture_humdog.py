@@ -475,7 +475,7 @@ class PAN_model(BaseModel):
             rec_loss1 = self.criterion_rec(input_0,
                                            input_1,
                                            self.datasets[i].njoints,
-                                           indices=None)
+                                           indices=joint_indices)
 
             self.loss_recoder.add_scalar('rec_loss_quater_{}'.format(i), rec_loss1)
 
@@ -497,7 +497,7 @@ class PAN_model(BaseModel):
             self.loss_recoder.add_scalar('rec_loss_global_{}'.format(i), rec_loss2)
 
             # rec_loss3: reconstruct kinematic positions
-            rec_loss3 = self.criterion_kine(self.gt_pos[i], self.rec_pos[i], indices=None)
+            rec_loss3 = self.criterion_kine(self.gt_pos[i], self.rec_pos[i], indices=indices_withend)
             self.loss_recoder.add_scalar('rec_loss_position_{}'.format(i), rec_loss3)
 
             rec_loss = rec_loss1 + rec_loss2 * 100 + rec_loss3 * 1e-2 + rec_loss_yaw * 25

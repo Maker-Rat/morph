@@ -77,7 +77,7 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Generic robot motion viewer (qpos-based, joint-index order).")
     p.add_argument("--output-root", type=str, default=".")
     p.add_argument("--robot-id", type=str, required=True, help="Robot ID in configs/robots/<robot-id>.yaml")
-    p.add_argument("--pkl", type=str, required=True, help="Motion PKL path")
+    p.add_argument("--pkl", type=str, default=None, help="Optional motion PKL path")
     p.add_argument("--xml", type=str, default=None, help="Override XML path")
     p.add_argument("--fps", type=float, default=None, help="Playback FPS override")
     p.add_argument("--loop", action="store_true")
@@ -88,9 +88,34 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     output_root = Path(args.output_root).expanduser().resolve()
-    pkl_path = Path(args.pkl).expanduser().resolve()
     xml_path = _resolve_robot_xml(output_root, args.robot_id, args.xml)
 
+    model = mujoco.MjModel.from_xml_path(str(xml_path))
+    data = mujoco.MjData(model)
+    model.opt.gravity[:] = 0.0
+
+    has_free_base = model.njnt > 0 and int(model.jnt_type[0]) == int(mujoco.mjtJoint.mjJNT_FREE) and model.nq >= 7
+    joint_qpos = _get_non_free_joint_qpos_addrs(model)
+    print(f"XML: {xml_path}")
+    print(f"Model: nq={model.nq} nv={model.nv} njnt={model.njnt}")
+    print(f"Free base: {has_free_base}")
+
+    # No PKL mode: spawn interactive viewer for manual slider/joint testing.
+    if args.pkl is None:
+        print("PKL: <none> (interactive mode)")
+        print("Controls: use MuJoCo viewer UI sliders to move joints/controls. Press ESC to quit.")
+        with mujoco.viewer.launch_passive(model, data) as viewer:
+            viewer.cam.distance = 2.8
+            viewer.cam.azimuth = 45
+            viewer.cam.elevation = -20
+            while viewer.is_running():
+                # Keep visualization deterministic/no-physics: only kinematic forward pass.
+                mujoco.mj_forward(model, data)
+                viewer.sync()
+                time.sleep(1.0 / 60.0)
+        return
+
+    pkl_path = Path(args.pkl).expanduser().resolve()
     dof_pos, root_pos, root_rot, fps_from_file = _load_motion(pkl_path)
     n_frames = int(dof_pos.shape[0])
     if n_frames == 0:
@@ -99,21 +124,11 @@ def main() -> None:
     play_fps = float(args.fps) if args.fps is not None else float(fps_from_file if fps_from_file else 30.0)
     dt = 1.0 / max(play_fps, 1e-6)
 
-    model = mujoco.MjModel.from_xml_path(str(xml_path))
-    data = mujoco.MjData(model)
-    model.opt.gravity[:] = 0.0
-
-    has_free_base = model.njnt > 0 and int(model.jnt_type[0]) == int(mujoco.mjtJoint.mjJNT_FREE) and model.nq >= 7
-    joint_qpos = _get_non_free_joint_qpos_addrs(model)
     n_model_joints = len(joint_qpos)
     n_motion_joints = int(dof_pos.shape[1])
     map_dim = min(n_model_joints, n_motion_joints)
-
-    print(f"XML: {xml_path}")
     print(f"PKL: {pkl_path}")
     print(f"Frames: {n_frames}, playback_fps: {play_fps:.3f}")
-    print(f"Model: nq={model.nq} nv={model.nv} njnt={model.njnt}")
-    print(f"Free base: {has_free_base}")
     print(f"Joint dims: motion={n_motion_joints}, model_non_free={n_model_joints}, mapped={map_dim}")
     if n_model_joints != n_motion_joints:
         print("[warn] Motion joint dim does not exactly match model non-free joints; using min(motion, model).")

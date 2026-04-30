@@ -3,17 +3,21 @@ from __future__ import annotations
 import argparse
 import os
 import pickle
+import json
 from pathlib import Path
 from typing import Optional, Tuple
 
 import numpy as np
 import torch
+import matplotlib.pyplot as plt
 
 from csmt.models import create_model
+from csmt.models.motion_corrector import MotionCorrector
 from csmt.parser.base import dict_to_object
 from csmt.pipelines.create_distill_dataset import load_teacher_args
 from csmt.robots.registry import load_robot_spec
 from csmt.tasks.registry import resolve_task_config
+from csmt.utils.loss_function import estimate_contact_from_height
 from csmt.utils.utils import get_body_part
 
 
@@ -293,6 +297,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--input-pkl", type=str, required=True)
     p.add_argument("--output-pkl", type=str, required=True)
     p.add_argument(
+        "--corrector-ckpt",
+        type=str,
+        default=None,
+        help="Optional corrector checkpoint (best.pt/last.pt) to post-correct teacher output.",
+    )
+    p.add_argument(
         "--output-src-rec-pkl",
         type=str,
         default=None,
@@ -321,6 +331,19 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--device", type=str, default="cuda:0")
     p.add_argument("--max-frames", type=int, default=0)
     p.add_argument(
+        "--save-contact-debug",
+        action="store_true",
+        help="Save source/destination contact estimates and source-gated destination contact plots.",
+    )
+    p.add_argument(
+        "--contact-debug-prefix",
+        type=str,
+        default=None,
+        help="Output prefix for contact debug files. Defaults to <output-pkl-stem>_contact_debug",
+    )
+    p.add_argument("--ground-margin", type=float, default=0.05)
+    p.add_argument("--physics-ref-frames", type=int, default=5)
+    p.add_argument(
         "--dst-start-height",
         type=float,
         default=0.28,
@@ -328,6 +351,31 @@ def parse_args() -> argparse.Namespace:
     )
     p.set_defaults(save_src_debug=True)
     return p.parse_args()
+
+
+def _load_corrector(
+    ckpt_path: str,
+    device: torch.device,
+    motion_dim: int,
+    joint_dim: int,
+) -> MotionCorrector:
+    ckpt = torch.load(ckpt_path, map_location=device)
+    cfg = ckpt.get("config", {}) if isinstance(ckpt, dict) else {}
+    model = MotionCorrector(
+        motion_dim=int(motion_dim),
+        joint_dim=int(joint_dim),
+        hidden_dim=int(cfg.get("hidden_dim", 192)),
+        num_blocks=int(cfg.get("num_blocks", 4)),
+        kernel_size=int(cfg.get("kernel_size", 5)),
+        dropout=float(cfg.get("dropout", 0.1)),
+        joint_delta_max=float(cfg.get("joint_delta_max", 0.35)),
+        linvel_delta_max=float(cfg.get("linvel_delta_max", 0.30)),
+        yaw_delta_max=float(cfg.get("yaw_delta_max", 0.80)),
+    ).to(device)
+    state = ckpt.get("model_state", ckpt)
+    model.load_state_dict(state, strict=True)
+    model.eval()
+    return model
 
 
 def main() -> None:
@@ -433,6 +481,14 @@ def main() -> None:
     dst_name = resolved.src_robot if cli.reverse else resolved.dst_robot
     src_stats_active = datasets[src_idx]
     dst_stats_active = datasets[dst_idx]
+    corrector = None
+    if cli.corrector_ckpt:
+        corrector = _load_corrector(
+            ckpt_path=str(Path(cli.corrector_ckpt).expanduser().resolve()),
+            device=args.device,
+            motion_dim=int(dst_stats_active.njoints + 4),
+            joint_dim=int(dst_stats_active.njoints),
+        )
 
     motion_pkl = _load_motion_pkl(cli.input_pkl)
     src_motion, yaw_init, fps, src_start_height = _prepare_src_input(
@@ -466,7 +522,15 @@ def main() -> None:
 
         rec_denorm = src_stats_active.denorm(rec_motion, transpose=False).squeeze(0).detach().cpu().numpy()
         cyc_denorm = src_stats_active.denorm(cyc_motion, transpose=False).squeeze(0).detach().cpu().numpy()
-        retar_denorm = dst_stats_active.denorm(retar_motion, transpose=False).squeeze(0).detach().cpu().numpy()
+
+        retar_denorm_t = dst_stats_active.denorm(retar_motion, transpose=False)  # [1,T,C]
+        if corrector is not None:
+            corrected_denorm_t, delta_t = corrector(retar_denorm_t)
+            retar_denorm = corrected_denorm_t.squeeze(0).detach().cpu().numpy()
+            corr_delta_abs = float(delta_t.abs().mean().detach().cpu().item())
+        else:
+            retar_denorm = retar_denorm_t.squeeze(0).detach().cpu().numpy()
+            corr_delta_abs = 0.0
 
     output_pkl = _motion_to_pkl(
         motion_denorm=retar_denorm,
@@ -476,6 +540,151 @@ def main() -> None:
         start_height=float(cli.dst_start_height),
     )
     _save_motion_pkl(cli.output_pkl, output_pkl)
+
+    if cli.save_contact_debug:
+        out_path = Path(cli.output_pkl).expanduser().resolve()
+        if cli.contact_debug_prefix is None:
+            prefix = out_path.with_name(f"{out_path.stem}_contact_debug")
+        else:
+            prefix = Path(cli.contact_debug_prefix).expanduser().resolve()
+        prefix.parent.mkdir(parents=True, exist_ok=True)
+
+        with torch.no_grad():
+            src_motion_denorm_t = src_stats_active.denorm(src_motion, transpose=False)
+            src_pos, _ = model.models[src_idx].fk.forward(src_motion_denorm_t)
+
+            if corrector is not None:
+                retar_denorm_t = torch.tensor(retar_denorm, dtype=torch.float32, device=args.device).unsqueeze(0)
+            else:
+                retar_denorm_t = torch.tensor(retar_denorm, dtype=torch.float32, device=args.device).unsqueeze(0)
+            dst_pos, _ = model.models[dst_idx].fk.forward(retar_denorm_t)
+
+            dst_contact, dst_ground_z = estimate_contact_from_height(
+                dst_pos,
+                list(resolved.dst_feet_indices if not cli.reverse else resolved.src_feet_indices),
+                ground_margin=float(cli.ground_margin),
+                ground_mode="first_frames",
+                fixed_ground_z=0.0,
+                ref_frames=max(1, int(cli.physics_ref_frames)),
+                smooth_steps=1,
+            )
+            src_contact, _ = estimate_contact_from_height(
+                src_pos,
+                list(resolved.src_feet_indices if not cli.reverse else resolved.dst_feet_indices),
+                ground_margin=float(cli.ground_margin),
+                ground_mode="first_frames",
+                fixed_ground_z=0.0,
+                ref_frames=max(1, int(cli.physics_ref_frames)),
+                smooth_steps=1,
+            )
+            # Robust time alignment for debug mode: teacher paths can differ by 1 frame.
+            if src_contact.shape[1] != dst_contact.shape[1]:
+                t_common = min(int(src_contact.shape[1]), int(dst_contact.shape[1]))
+                src_contact = src_contact[:, :t_common, :]
+                dst_contact = dst_contact[:, :t_common, :]
+            src_time_gate = torch.max(src_contact, dim=-1, keepdim=True).values
+            gated_contact = dst_contact * src_time_gate
+
+        src_contact_np = src_contact.squeeze(0).detach().cpu().numpy()
+        dst_contact_np = dst_contact.squeeze(0).detach().cpu().numpy()
+        src_gate_np = src_time_gate.squeeze(0).detach().cpu().numpy()
+        gated_np = gated_contact.squeeze(0).detach().cpu().numpy()
+        dst_ground_np = dst_ground_z.squeeze().detach().cpu().numpy()
+        src_foot_idx = list(resolved.src_feet_indices if not cli.reverse else resolved.dst_feet_indices)
+        dst_foot_idx = list(resolved.dst_feet_indices if not cli.reverse else resolved.src_feet_indices)
+        src_foot_xyz_np = src_pos[:, :, src_foot_idx, :].squeeze(0).detach().cpu().numpy()  # [T, n_src_feet, 3]
+        dst_foot_xyz_np = dst_pos[:, :, dst_foot_idx, :].squeeze(0).detach().cpu().numpy()  # [T, n_dst_feet, 3]
+        src_foot_z_np = src_foot_xyz_np[..., 2]
+        dst_foot_z_np = dst_foot_xyz_np[..., 2]
+
+        np.savez_compressed(
+            str(prefix) + ".npz",
+            src_contact=src_contact_np,
+            dst_contact=dst_contact_np,
+            src_time_gate=src_gate_np,
+            gated_contact=gated_np,
+            dst_ground_z=dst_ground_np,
+            src_foot_xyz=src_foot_xyz_np,
+            dst_foot_xyz=dst_foot_xyz_np,
+            src_foot_z=src_foot_z_np,
+            dst_foot_z=dst_foot_z_np,
+            src_feet_indices=np.asarray(src_foot_idx, dtype=np.int32),
+            dst_feet_indices=np.asarray(dst_foot_idx, dtype=np.int32),
+            reverse=np.asarray([int(cli.reverse)], dtype=np.int32),
+        )
+
+        t = np.arange(min(src_contact_np.shape[0], dst_contact_np.shape[0], gated_np.shape[0]), dtype=np.int32)
+        src_contact_np = src_contact_np[: len(t)]
+        dst_contact_np = dst_contact_np[: len(t)]
+        src_gate_np = src_gate_np[: len(t)]
+        gated_np = gated_np[: len(t)]
+        fig, axes = plt.subplots(4, 1, figsize=(14, 10), sharex=True)
+        for k in range(src_contact_np.shape[1]):
+            axes[0].plot(t, src_contact_np[:, k], lw=1.2, label=f"src_f{k}")
+        axes[0].set_ylabel("src contact")
+        axes[0].set_ylim(-0.05, 1.05)
+        axes[0].legend(loc="upper right", ncol=4, fontsize=8)
+
+        for k in range(dst_contact_np.shape[1]):
+            axes[1].plot(t, dst_contact_np[:, k], lw=1.2, label=f"dst_f{k}")
+        axes[1].set_ylabel("dst contact")
+        axes[1].set_ylim(-0.05, 1.05)
+        axes[1].legend(loc="upper right", ncol=4, fontsize=8)
+
+        axes[2].plot(t, src_gate_np[:, 0], color="black", lw=1.6, label="src_time_gate")
+        axes[2].set_ylabel("src gate")
+        axes[2].set_ylim(-0.05, 1.05)
+        axes[2].legend(loc="upper right", fontsize=8)
+
+        for k in range(gated_np.shape[1]):
+            axes[3].plot(t, gated_np[:, k], lw=1.2, label=f"gated_dst_f{k}")
+        axes[3].set_ylabel("gated contact")
+        axes[3].set_ylim(-0.05, 1.05)
+        axes[3].set_xlabel("frame")
+        axes[3].legend(loc="upper right", ncol=4, fontsize=8)
+
+        fig.tight_layout()
+        fig.savefig(str(prefix) + ".png", dpi=160)
+        plt.close(fig)
+
+        fig2, axes2 = plt.subplots(2, 1, figsize=(14, 7), sharex=True)
+        for k in range(src_foot_z_np.shape[1]):
+            axes2[0].plot(t, src_foot_z_np[: len(t), k], lw=1.2, label=f"src_foot{src_foot_idx[k]}_z")
+        axes2[0].set_ylabel("src foot z (m)")
+        axes2[0].legend(loc="upper right", ncol=2, fontsize=8)
+
+        for k in range(dst_foot_z_np.shape[1]):
+            axes2[1].plot(t, dst_foot_z_np[: len(t), k], lw=1.2, label=f"dst_foot{dst_foot_idx[k]}_z")
+        if np.isscalar(dst_ground_np):
+            axes2[1].axhline(float(dst_ground_np), color="black", ls="--", lw=1.2, label="dst_ground_z")
+        else:
+            axes2[1].plot(t, np.full_like(t, float(np.asarray(dst_ground_np).reshape(-1)[0]), dtype=np.float32),
+                          color="black", ls="--", lw=1.2, label="dst_ground_z")
+        axes2[1].set_ylabel("dst foot z (m)")
+        axes2[1].set_xlabel("frame")
+        axes2[1].legend(loc="upper right", ncol=2, fontsize=8)
+        fig2.tight_layout()
+        fig2.savefig(str(prefix) + "_z.png", dpi=160)
+        plt.close(fig2)
+
+        dims = ["x", "y", "z"]
+        fig3, axes3 = plt.subplots(3, 2, figsize=(16, 10), sharex=True)
+        for d, dname in enumerate(dims):
+            for k in range(src_foot_xyz_np.shape[1]):
+                axes3[d, 0].plot(t, src_foot_xyz_np[: len(t), k, d], lw=1.2, label=f"src_foot{src_foot_idx[k]}_{dname}")
+            axes3[d, 0].set_ylabel(f"src {dname} (m)")
+            axes3[d, 0].legend(loc="upper right", ncol=2, fontsize=8)
+
+            for k in range(dst_foot_xyz_np.shape[1]):
+                axes3[d, 1].plot(t, dst_foot_xyz_np[: len(t), k, d], lw=1.2, label=f"dst_foot{dst_foot_idx[k]}_{dname}")
+            axes3[d, 1].set_ylabel(f"dst {dname} (m)")
+            axes3[d, 1].legend(loc="upper right", ncol=2, fontsize=8)
+
+        axes3[2, 0].set_xlabel("frame")
+        axes3[2, 1].set_xlabel("frame")
+        fig3.tight_layout()
+        fig3.savefig(str(prefix) + "_xyz.png", dpi=160)
+        plt.close(fig3)
 
     src_rec_path = cli.output_src_rec_pkl
     src_cyc_path = cli.output_src_cyc_pkl
@@ -511,6 +720,14 @@ def main() -> None:
     if cli.save_src_debug:
         print(f"  src rec: {Path(src_rec_path).expanduser().resolve()}")
         print(f"  src cyc: {Path(src_cyc_path).expanduser().resolve()}")
+    if cli.corrector_ckpt:
+        print(f"  corrector: {Path(cli.corrector_ckpt).expanduser().resolve()}")
+        print(f"  corrector mean|delta|: {corr_delta_abs:.6f}")
+    if cli.save_contact_debug:
+        print(f"  contact debug npz: {str(prefix) + '.npz'}")
+        print(f"  contact debug png: {str(prefix) + '.png'}")
+        print(f"  contact debug z png: {str(prefix) + '_z.png'}")
+        print(f"  contact debug xyz png: {str(prefix) + '_xyz.png'}")
     print(f"  frames: {t_len}")
     print(f"  dims: src={src_stats_active.njoints + 4} dst={dst_stats_active.njoints + 4}")
 

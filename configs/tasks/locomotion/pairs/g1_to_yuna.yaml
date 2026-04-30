@@ -6,14 +6,16 @@ correspondence:
   body_groups:
   - name: legs_all
     src_body_indices: [1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15]
-    dst_body_indices: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
+    dst_body_indices: [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
   joint_groups:
   - name: legs_all
     src_joint_indices: [0, 1, 2, 3, 6, 7, 8, 9]
-    dst_joint_indices: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+    dst_joint_indices: [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
 loss_overrides:
-  lambda_skating: 0.0
-  lambda_grounding: 0.0
+  lambda_rec: 2.5
+  lambda_cycle: 1.0
+  lambda_retar_vel: 500.0
+  lambda_cycle_motion: 100.0
 indices:
   src_feet: [7, 15]
   dst_feet: [3, 6, 9, 12, 15, 18]

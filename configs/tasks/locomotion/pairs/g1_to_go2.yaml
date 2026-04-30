@@ -12,8 +12,8 @@ correspondence:
     src_joint_indices: [0, 1, 2, 3, 6, 7, 8, 9]
     dst_joint_indices: [3, 4, 5, 9, 10, 11, 0, 1, 2, 6, 7, 8]
 loss_overrides:
-  lambda_skating: 0.01
-  lambda_grounding: 0.5
+  lambda_skating: 0.0
+  lambda_grounding: 0.0
 indices:
   src_feet: [7, 15]
   dst_feet: [3, 6, 9, 12]

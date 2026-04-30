@@ -1,0 +1,23 @@
+model_name: motion_corrector
+batch_size: 64
+epochs: 50
+num_workers: 0
+lr: 0.0003
+weight_decay: 0.00001
+device: cuda:0
+
+hidden_dim: 192
+num_blocks: 4
+kernel_size: 5
+dropout: 0.1
+joint_delta_max: 0.35
+linvel_delta_max: 0.30
+yaw_delta_max: 0.80
+
+lambda_preserve: 1.0
+lambda_smooth: 0.1
+lambda_skating: 0.5
+lambda_grounding: 1.0
+lambda_joint_limits: 0.05
+ground_margin: 0.05
+physics_ref_frames: 5

@@ -217,6 +217,7 @@ def build_stripped_fk_xml(src_xml: Path, dst_fk_xml: Path, overwrite: bool = Fal
 
     src_tree = ET.parse(src_xml)
     src_root = src_tree.getroot()
+    class_joint_attrs = _build_default_class_joint_attrs(src_root)
     dst_root = ET.Element("mujoco")
     if "model" in src_root.attrib:
         dst_root.set("model", f"{src_root.attrib['model']}_barebones")
@@ -243,7 +244,7 @@ def build_stripped_fk_xml(src_xml: Path, dst_fk_xml: Path, overwrite: bool = Fal
         raise ValueError(f"worldbody not found in XML: {src_xml}")
     dst_worldbody = ET.SubElement(dst_root, "worldbody")
     for src_body in src_worldbody.findall("body"):
-        dst_worldbody.append(_clone_body_for_fk(src_body))
+        dst_worldbody.append(_clone_body_for_fk(src_body, class_joint_attrs, inherited_childclass=None))
 
     tree = ET.ElementTree(dst_root)
     ET.indent(tree, space="  ")
@@ -251,7 +252,12 @@ def build_stripped_fk_xml(src_xml: Path, dst_fk_xml: Path, overwrite: bool = Fal
     tree.write(dst_fk_xml, encoding="utf-8", xml_declaration=True)
 
 
-def _clone_body_for_fk(src_body: ET.Element) -> ET.Element:
+def _clone_body_for_fk(
+    src_body: ET.Element,
+    class_joint_attrs: dict[str, dict[str, str]],
+    inherited_childclass: str | None,
+) -> ET.Element:
+    active_childclass = src_body.attrib.get("childclass", inherited_childclass)
     dst_body = ET.Element(
         "body",
         {
@@ -275,9 +281,17 @@ def _clone_body_for_fk(src_body: ET.Element) -> ET.Element:
             )
             continue
         if src_child.tag == "joint":
+            # Resolve effective joint attrs with MJCF default inheritance:
+            # explicit joint class > inherited body childclass > explicit attrs override both.
+            resolved_joint_attrs: dict[str, str] = {}
+            joint_class = src_child.attrib.get("class") or active_childclass
+            if joint_class and joint_class in class_joint_attrs:
+                resolved_joint_attrs.update(class_joint_attrs[joint_class])
+            resolved_joint_attrs.update(src_child.attrib)
+
             joint_attrs = {
                 key: value
-                for key, value in src_child.attrib.items()
+                for key, value in resolved_joint_attrs.items()
                 if key in _JOINT_KEEP_ATTRS
             }
             if "type" not in joint_attrs:
@@ -285,7 +299,7 @@ def _clone_body_for_fk(src_body: ET.Element) -> ET.Element:
             dst_body.append(ET.Element("joint", joint_attrs))
             continue
         if src_child.tag == "body":
-            dst_body.append(_clone_body_for_fk(src_child))
+            dst_body.append(_clone_body_for_fk(src_child, class_joint_attrs, active_childclass))
             continue
 
     return dst_body

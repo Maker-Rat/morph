@@ -16,8 +16,8 @@ yaw_delta_max: 0.80
 
 lambda_preserve: 1.0
 lambda_smooth: 0.1
-lambda_skating: 0.5
-lambda_grounding: 1.0
+lambda_skating: 0.0
+lambda_grounding: 10.0
 lambda_joint_limits: 0.05
 ground_margin: 0.05
 physics_ref_frames: 5

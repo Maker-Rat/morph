@@ -1,17 +1,11 @@
 task_family: manipulation
-enabled_losses:
-  rec: true
-  cycle: true
-  retarget_vel: true
-  ee: true
-  physics: false
 loss_weights:
   lambda_rec: 1.0
   lambda_cycle: 1.0
   lambda_retar_vel: 100.0
-  lambda_cycle_motion: 0.0
+  lambda_cycle_motion: 100.0
   joint_limit_threshold: 0.85
   joint_limit_loss_weight: 0.1
   lambda_skating: 0.0
   lambda_grounding: 0.0
-  lambda_ee: 0.5
+  lambda_ee: 1.0

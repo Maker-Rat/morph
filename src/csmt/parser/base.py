@@ -80,11 +80,17 @@ def add_losses_options(parser):
                             '(e.g., 0.85 starts penalizing near 85% of the limit).')
     group.add_argument('--joint_limit_loss_weight', type=float, default=1e-1,
                        help='Weight for soft joint-limit regularization loss on retargeted joints.')
-    group.add_argument('--ee_match_mode', type=str, default='position',
-                       choices=['position', 'direction'],
-                       help='EE loss mode: position (base-relative vectors) or direction only')
+    group.add_argument('--ee_match_mode', type=str, default='disp',
+                       choices=['disp', 'pos', 'position', 'direction'],
+                       help='EE loss mode: disp (displacement target), pos (base-relative position target), '
+                            'or direction only. Legacy alias: position -> disp.')
     group.add_argument('--ee_ref_frames', type=int, default=5,
                        help='Number of initial frames used as EE displacement reference')
+    group.add_argument('--ee_norm_mode', type=str, default='per_domain',
+                       choices=['none', 'per_domain', 'src_only', 'shared'],
+                       help='Optional EE normalization mode for disp/pos targets.')
+    group.add_argument('--ee_axis_norm', type=boolean_string, default=True,
+                       help='If True, apply per-axis normalization on source EE signal for disp/pos targets.')
 
     # Physics losses — contact-gated, applied to retargeted motions only
     group.add_argument('--lambda_skating', type=float, default=0.0,

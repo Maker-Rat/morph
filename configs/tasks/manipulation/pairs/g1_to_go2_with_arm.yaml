@@ -20,6 +20,9 @@ correspondence:
 loss_overrides: 
   lambda_skating: 0.0
   lambda_grounding: 0.0
+  lambda_ee: 0.1
+  ee_match_mode: disp
+  ee_norm_mode: none
 indices:
   src_feet: [7, 15]
   dst_feet: [3, 6, 9, 12]

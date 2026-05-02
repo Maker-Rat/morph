@@ -394,7 +394,7 @@ class PAN_model(BaseModel):
         return src_ee, dst_ee
 
     def compute_ee_match_loss(self, src_ee, dst_ee,
-                              mode='position',
+                              mode='disp',
                               src_scale=None, dst_scale=None,
                               eps=1e-8):
         """
@@ -403,9 +403,9 @@ class PAN_model(BaseModel):
         Args:
             src_ee: [B, T, K, 3] source EE points (already paired/aligned)
             dst_ee: [B, T, K, 3] destination EE points (already paired/aligned)
-            mode: 'position' | 'direction'
+            mode: 'disp' | 'pos' | 'direction' (legacy alias: 'position' -> 'disp')
             src_scale, dst_scale: optional manual scales. If None, estimated from
-                batch mean displacement magnitudes for morphology-normalized matching.
+                batch mean signal magnitudes for optional normalization.
         """
         if src_ee is None or dst_ee is None:
             return torch.tensor(0.0, device=self.device)
@@ -416,35 +416,61 @@ class PAN_model(BaseModel):
         src_ee = src_ee[:, :, :n, :]
         dst_ee = dst_ee[:, :, :n, :]
 
+        # Backward-compatibility alias.
         if mode == 'position':
-            # Displacement-based EE target:
-            # match motion intent while ignoring static cross-morphology offsets
-            # (e.g. human elbows above pelvis vs dog paws below base at rest).
-            ref_frames = int(getattr(self.args, 'ee_ref_frames', 10))
-            ref_frames = max(1, min(ref_frames, src_ee.shape[1], dst_ee.shape[1]))
-            src_ref = src_ee[:, :ref_frames].mean(dim=1, keepdim=True)  # [B,1,K,3]
-            dst_ref = dst_ee[:, :ref_frames].mean(dim=1, keepdim=True)  # [B,1,K,3]
-            src_disp = src_ee - src_ref
-            dst_disp = dst_ee - dst_ref
+            mode = 'disp'
 
+        if mode in ('disp', 'pos'):
+            # Build source/destination EE signals to compare.
+            # - disp: displacement from first ee_ref_frames (motion intent, offset-invariant)
+            # - pos : absolute base-relative positions
+            # Optional normalization can be configured via args.ee_norm_mode.
+            src_sig = src_ee
+            dst_sig = dst_ee
+            if mode == 'disp':
+                # Displacement-based EE target:
+                # match motion intent while ignoring static cross-morphology offsets
+                # (e.g. human elbows above pelvis vs dog paws below base at rest).
+                ref_frames = int(getattr(self.args, 'ee_ref_frames', 10))
+                ref_frames = max(1, min(ref_frames, src_ee.shape[1], dst_ee.shape[1]))
+                src_ref = src_ee[:, :ref_frames].mean(dim=1, keepdim=True)  # [B,1,K,3]
+                dst_ref = dst_ee[:, :ref_frames].mean(dim=1, keepdim=True)  # [B,1,K,3]
+                src_sig = src_ee - src_ref
+                dst_sig = dst_ee - dst_ref
+
+            norm_mode = str(getattr(self.args, 'ee_norm_mode', 'per_domain')).lower()
             if src_scale is None:
-                src_scale = torch.norm(src_disp, dim=-1).mean().detach().clamp_min(eps)
+                src_scale = torch.norm(src_sig, dim=-1).mean().detach().clamp_min(eps)
             else:
                 src_scale = torch.tensor(float(src_scale), device=src_ee.device).clamp_min(eps)
             if dst_scale is None:
-                dst_scale = torch.norm(dst_disp, dim=-1).mean().detach().clamp_min(eps)
+                dst_scale = torch.norm(dst_sig, dim=-1).mean().detach().clamp_min(eps)
             else:
                 dst_scale = torch.tensor(float(dst_scale), device=dst_ee.device).clamp_min(eps)
 
-            src_disp = src_disp / src_scale
-            dst_disp = dst_disp / dst_scale
+            if norm_mode == 'none':
+                pass
+            elif norm_mode == 'per_domain':
+                src_sig = src_sig / src_scale
+                dst_sig = dst_sig / dst_scale
+            elif norm_mode == 'src_only':
+                src_sig = src_sig / src_scale
+                dst_sig = dst_sig / src_scale
+            elif norm_mode == 'shared':
+                shared_scale = (src_scale + dst_scale) * 0.5
+                src_sig = src_sig / shared_scale
+                dst_sig = dst_sig / shared_scale
+            else:
+                raise ValueError(f"Unsupported ee_norm_mode: {norm_mode}")
 
-            # Per-axis normalization prevents one dominant axis (often Z) from
-            # overshadowing X/Y during optimization.
-            axis_scale = torch.mean(torch.abs(src_disp), dim=(0, 1, 2), keepdim=True).detach().clamp_min(1e-2)
-            src_disp = src_disp / axis_scale
-            dst_disp = dst_disp / axis_scale
-            return self.mse(dst_disp, src_disp)
+            axis_norm = bool(getattr(self.args, 'ee_axis_norm', True))
+            if axis_norm:
+                # Per-axis normalization prevents one dominant axis (often Z) from
+                # overshadowing X/Y during optimization.
+                axis_scale = torch.mean(torch.abs(src_sig), dim=(0, 1, 2), keepdim=True).detach().clamp_min(1e-2)
+                src_sig = src_sig / axis_scale
+                dst_sig = dst_sig / axis_scale
+            return self.mse(dst_sig, src_sig)
 
         if mode == 'direction':
             src_dir = src_ee / (torch.norm(src_ee, dim=-1, keepdim=True) + eps)

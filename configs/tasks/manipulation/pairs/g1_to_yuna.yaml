@@ -6,13 +6,13 @@ correspondence:
   body_groups:
   - name: legs_all
     src_body_indices: [1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15]
-    dst_body_indices: [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
+    dst_body_indices: [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
   - name: left_arm
     src_body_indices: [22, 23, 24, 25]
-    dst_body_indices: [1, 2, 3]
+    dst_body_indices: [1, 2, 3, 4]
   - name: right_arm
     src_body_indices: [30, 31, 32, 33]
-    dst_body_indices: [4, 5, 6]
+    dst_body_indices: [5, 6, 7, 8]
 
   joint_groups:
   - name: legs_all
@@ -26,8 +26,13 @@ correspondence:
     dst_joint_indices: [3, 4, 5]
 
 loss_overrides:
+  lambda_skating: 0.0
+  lambda_grounding: 0.0
+  lambda_ee: 0.1
+  ee_match_mode: disp
+  ee_norm_mode: none
 indices:
   src_feet: [7, 15]
-  dst_feet: [3, 6, 9, 12, 15, 18]
+  dst_feet: [12, 16, 20, 24]
   src_ee: [25, 33]
-  dst_ee: [3, 6]
+  dst_ee: [4, 8]

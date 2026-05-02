@@ -2,21 +2,18 @@
   <compiler angle="radian" meshdir="meshes" />
   <asset>
     <mesh name="T8" content_type="model/stl" file="T8.stl" />
-    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072"/>
-    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3"
-      markrgb="0.8 0.8 0.8" width="300" height="300"/>
-    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0.2"/>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072" />
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3" markrgb="0.8 0.8 0.8" width="300" height="300" />
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0.2" />
   </asset>
-
   <visual>
-    <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0"/>
-    <rgba haze="0.15 0.25 0.35 1"/>
-    <global azimuth="-130" elevation="-20"/>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0" />
+    <rgba haze="0.15 0.25 0.35 1" />
+    <global azimuth="-130" elevation="-20" />
   </visual>
-
   <worldbody>
-    <light pos="0 0 1.5" dir="0 0 -1" directional="true"/>
-    <geom name="floor" type="plane" size="0 0 0.05" material="groundplane"/>
+    <light pos="0 0 1.5" dir="0 0 -1" directional="true" />
+    <geom name="floor" type="plane" size="0 0 0.05" material="groundplane" />
     <body name="base" pos="0 0 0">
       <freejoint name="root" />
       <geom size="0.08 0.075 0.09" pos="0 0 0.06" type="box" rgba="0.1 0.1 0.1 1" />
@@ -46,6 +43,7 @@
             <joint name="1FL_elbow" pos="0 0 0" axis="0 0 1" range="-3.14 3.14" actuatorfrcrange="-60 60" />
             <geom size="0.016 0.1498" pos="0.1625 0 0.02" quat="0.707123 0 0.70709 0" type="cylinder" rgba="0.1 0.1 0.1 1" />
             <geom size="0.016 0.0005" pos="0.3255 0 0.02" quat="0.707107 2.23686e-06 0.707107 2.23686e-06" type="cylinder" />
+            <body name="foot_1FL_end" pos="0.3255 0 0.02" />
           </body>
         </body>
       </body>
@@ -63,6 +61,7 @@
             <joint name="2FR_elbow" pos="0 0 0" axis="0 0 1" range="-3.14 3.14" actuatorfrcrange="-60 60" />
             <geom size="0.016 0.1498" pos="0.1625 0 0.02" quat="0.707123 0 0.70709 0" type="cylinder" rgba="0.1 0.1 0.1 1" />
             <geom size="0.016 0.0005" pos="0.3255 0 0.02" quat="0.707107 2.23686e-06 0.707107 2.23686e-06" type="cylinder" />
+            <body name="foot_2FR_end" pos="0.3255 0 0.02" />
           </body>
         </body>
       </body>
@@ -80,6 +79,7 @@
             <joint name="3ML_elbow" pos="0 0 0" axis="0 0 1" range="-3.14 3.14" actuatorfrcrange="-60 60" />
             <geom size="0.016 0.1498" pos="0.1625 0 0.02" quat="0.707123 0 0.70709 0" type="cylinder" rgba="0.1 0.1 0.1 1" />
             <geom size="0.016 0.0005" pos="0.3255 -3e-09 0.02" quat="0.707107 4.35818e-06 0.707107 1.15539e-07" type="cylinder" />
+            <body name="foot_3ML_end" pos="0.3255 0 0.02" />
           </body>
         </body>
       </body>
@@ -97,6 +97,7 @@
             <joint name="4MR_elbow" pos="0 0 0" axis="0 0 1" range="-3.14 3.14" actuatorfrcrange="-60 60" />
             <geom size="0.016 0.1498" pos="0.1625 0 0.02" quat="0.707123 0 0.70709 0" type="cylinder" rgba="0.1 0.1 0.1 1" />
             <geom size="0.016 0.0005" pos="0.3255 0 0.02" quat="0.707107 2.23686e-06 0.707107 2.23686e-06" type="cylinder" />
+            <body name="foot_4MR_end" pos="0.3255 0 0.02" />
           </body>
         </body>
       </body>
@@ -114,6 +115,7 @@
             <joint name="5BL_elbow" pos="0 0 0" axis="0 0 1" range="-3.14 3.14" actuatorfrcrange="-60 60" />
             <geom size="0.016 0.1498" pos="0.1625 0 0.02" quat="0.707123 0 0.70709 0" type="cylinder" rgba="0.1 0.1 0.1 1" />
             <geom size="0.016 0.0005" pos="0.3255 0 0.02" quat="0.707107 2.23686e-06 0.707107 2.23686e-06" type="cylinder" />
+            <body name="foot_5BL_end" pos="0.3255 0 0.02" />
           </body>
         </body>
       </body>
@@ -131,6 +133,7 @@
             <joint name="6BR_elbow" pos="0 0 0" axis="0 0 1" range="-3.14 3.14" actuatorfrcrange="-60 60" />
             <geom size="0.016 0.1498" pos="0.1625 0 0.02" quat="0.707123 0 0.70709 0" type="cylinder" rgba="0.1 0.1 0.1 1" />
             <geom size="0.016 0.0005" pos="0.3255 0 0.02" quat="0.707107 2.23686e-06 0.707107 2.23686e-06" type="cylinder" />
+            <body name="foot_6BR_end" pos="0.3255 0 0.02" />
           </body>
         </body>
       </body>

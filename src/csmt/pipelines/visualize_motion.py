@@ -226,12 +226,12 @@ def _draw_contact_overlay(
     gidx = int(scn.ngeom)
     maxgeom = int(scn.maxgeom)
 
-    # Ground estimate patch.
-    if debug.dst_ground_z is not None and gidx < maxgeom:
+    # Contact reference plane at MuJoCo world ground (z=0).
+    if gidx < maxgeom:
         _init_geom_plane_patch(
             scn.geoms[gidx],
             center=base_pos,
-            z=float(debug.dst_ground_z),
+            z=0.0,
             rgba=np.array([0.25, 0.55, 1.0, 0.22], dtype=np.float32),
         )
         gidx += 1
@@ -258,9 +258,9 @@ def _draw_contact_overlay(
         _init_geom_sphere(scn.geoms[gidx], foot_pos, marker_radius, _contact_rgba(c))
         gidx += 1
 
-        # Vertical connector from estimated ground to foot.
-        if debug.dst_ground_z is not None and gidx < maxgeom:
-            p0 = np.array([foot_pos[0], foot_pos[1], float(debug.dst_ground_z)], dtype=np.float64)
+        # Vertical connector from MuJoCo world ground (z=0) to foot.
+        if gidx < maxgeom:
+            p0 = np.array([foot_pos[0], foot_pos[1], 0.0], dtype=np.float64)
             p1 = np.asarray(foot_pos, dtype=np.float64)
             mujoco.mjv_initGeom(
                 scn.geoms[gidx],

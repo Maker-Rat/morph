@@ -344,6 +344,17 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--ground-margin", type=float, default=0.05)
     p.add_argument("--physics-ref-frames", type=int, default=5)
     p.add_argument(
+        "--dst-start-height-mode",
+        type=str,
+        choices=["fixed", "from_ground_estimate"],
+        default="fixed",
+        help=(
+            "How to set output start height. "
+            "'fixed': use --dst-start-height. "
+            "'from_ground_estimate': estimate dst ground_z from retargeted FK first-frames and use NEGATIVE ground_z as start height."
+        ),
+    )
+    p.add_argument(
         "--dst-start-height",
         type=float,
         default=0.28,
@@ -532,12 +543,28 @@ def main() -> None:
             retar_denorm = retar_denorm_t.squeeze(0).detach().cpu().numpy()
             corr_delta_abs = 0.0
 
+    dst_start_height_used = float(cli.dst_start_height)
+    if str(cli.dst_start_height_mode).lower() == "from_ground_estimate":
+        with torch.no_grad():
+            retar_denorm_for_ground = torch.tensor(retar_denorm, dtype=torch.float32, device=args.device).unsqueeze(0)
+            dst_pos_for_ground, _ = model.models[dst_idx].fk.forward(retar_denorm_for_ground)
+            _, dst_ground_z_for_start = estimate_contact_from_height(
+                dst_pos_for_ground,
+                list(resolved.dst_feet_indices if not cli.reverse else resolved.src_feet_indices),
+                ground_margin=float(cli.ground_margin),
+                ground_mode="first_frames",
+                fixed_ground_z=0.0,
+                ref_frames=max(1, int(cli.physics_ref_frames)),
+                smooth_steps=1,
+            )
+        dst_start_height_used = float(dst_ground_z_for_start.squeeze().detach().cpu().item())
+
     output_pkl = _motion_to_pkl(
         motion_denorm=retar_denorm,
         dst_stats=dst_stats_active,
         yaw_init=float(yaw_init),
         fps=float(fps),
-        start_height=float(cli.dst_start_height),
+        start_height=dst_start_height_used,
     )
     _save_motion_pkl(cli.output_pkl, output_pkl)
 
@@ -728,6 +755,8 @@ def main() -> None:
         print(f"  contact debug png: {str(prefix) + '.png'}")
         print(f"  contact debug z png: {str(prefix) + '_z.png'}")
         print(f"  contact debug xyz png: {str(prefix) + '_xyz.png'}")
+    print(f"  dst start height mode: {cli.dst_start_height_mode}")
+    print(f"  dst start height used: {dst_start_height_used:.6f}")
     print(f"  frames: {t_len}")
     print(f"  dims: src={src_stats_active.njoints + 4} dst={dst_stats_active.njoints + 4}")
 

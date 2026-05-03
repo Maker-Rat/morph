@@ -772,16 +772,21 @@ class PAN_model(BaseModel):
                                 device=dst_contact.device, dtype=dst_contact.dtype
                             )
 
-                        gated_contact = dst_contact * src_time_gate
+                        # gated_contact = dst_contact * src_time_gate
+
+                        gated_contact_skating = dst_contact * src_time_gate
+
+                        # source-gated only for grounding (broadcast over feet)
+                        grounding_gate = src_time_gate.expand(-1, -1, dst_contact.shape[-1])
 
                     self.loss_recoder.add_scalar(f'src_contact_mean_{src_name}2{dst_name}', src_time_gate.mean())
                     self.loss_recoder.add_scalar(f'dst_contact_mean_{src_name}2{dst_name}', dst_contact.mean())
-                    self.loss_recoder.add_scalar(f'gated_contact_mean_{src_name}2{dst_name}', gated_contact.mean())
+                    self.loss_recoder.add_scalar(f'gated_contact_mean_{src_name}2{dst_name}', gated_contact_skating.mean())
 
                     if lambda_skating > 0:
                         sk = skating_loss_from_contact(
                             fake_pos_p,
-                            gated_contact,
+                            gated_contact_skating,
                             foot_indices=dst_foot_idx,
                             dt=dt,
                             horizontal_only=True,
@@ -792,7 +797,7 @@ class PAN_model(BaseModel):
                     if lambda_grounding > 0:
                         gp = grounding_loss_from_contact(
                             fake_pos_p,
-                            gated_contact,
+                            grounding_gate,
                             foot_indices=dst_foot_idx,
                             ground_z=dst_ground_z,
                             target_clearance=0.0,

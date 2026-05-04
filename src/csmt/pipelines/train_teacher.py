@@ -179,6 +179,12 @@ def main() -> None:
     args_dict["dst_joint_limits_lower"] = list(dst_robot.joint_limit_lower)
     args_dict["dst_joint_limits_upper"] = list(dst_robot.joint_limit_upper)
 
+    # Nominal base heights used by zero_nominal physics grounding mode.
+    if src_robot.nominal_base_height is not None:
+        args_dict["src_start_height"] = float(src_robot.nominal_base_height)
+    if dst_robot.nominal_base_height is not None:
+        args_dict["dst_start_height"] = float(dst_robot.nominal_base_height)
+
     src_stats = _resolve_dataset_path(resolved.src_robot, "train", "stats")
     src_train = _resolve_dataset_path(resolved.src_robot, "train", "train")
     src_test = _resolve_dataset_path(resolved.src_robot, "test", "test")

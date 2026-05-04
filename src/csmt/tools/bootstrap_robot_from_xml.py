@@ -57,6 +57,24 @@ class XmlSummary:
     joint_limit_upper: list[float]
 
 
+def infer_nominal_base_height(xml_path: Path) -> float | None:
+    try:
+        tree = ET.parse(xml_path)
+        root = tree.getroot()
+        worldbody = root.find("worldbody")
+        if worldbody is None:
+            return None
+        first_body = worldbody.find("body")
+        if first_body is None:
+            return None
+        pos = first_body.attrib.get("pos", "").split()
+        if len(pos) >= 3:
+            return float(pos[2])
+    except Exception:
+        return None
+    return None
+
+
 class _FlowNumListDumper(yaml.SafeDumper):
     pass
 
@@ -313,6 +331,7 @@ def write_robot_yaml(
     summary: XmlSummary,
     cfg_path: Path,
     overwrite: bool = False,
+    nominal_base_height: float | None = None,
 ) -> None:
     if cfg_path.exists() and not overwrite:
         raise FileExistsError(f"Robot yaml already exists: {cfg_path}")
@@ -323,6 +342,7 @@ def write_robot_yaml(
         "fk_xml": _relative_if_possible(fk_xml, output_root),
         "njoints": len(summary.joint_names),
         "nbodies": len(summary.body_names),
+        "nominal_base_height": nominal_base_height,
         "joint_limits": {
             "lower": summary.joint_limit_lower,
             "upper": summary.joint_limit_upper,
@@ -406,6 +426,7 @@ def main() -> None:
         summary,
         cfg_path,
         overwrite=args.overwrite,
+        nominal_base_height=infer_nominal_base_height(src_xml),
     )
 
     print("Bootstrapped robot scaffold:")

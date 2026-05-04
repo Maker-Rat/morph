@@ -49,6 +49,7 @@ nbodies: 25
 #   [22] shoulder_6BR_tube
 #   [23] elbow_6BR_tube
 #   [24] foot_6BR_end
+nominal_base_height: 0.3
 joint_limits:
   lower: [-3.14, -3.14, -3.14, -3.14, -3.14, -3.14, -3.14, -3.14, -3.14, -3.14, -3.14,
     -3.14, -3.14, -3.14, -3.14, -3.14, -3.14, -3.14]

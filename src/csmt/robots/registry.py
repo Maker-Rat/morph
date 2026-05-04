@@ -19,4 +19,5 @@ def load_robot_spec(path: str | Path) -> RobotSpec:
         base_body=str(cfg.get("base_body", "")),
         joint_limit_lower=list(limits.get("lower", [])),
         joint_limit_upper=list(limits.get("upper", [])),
+        nominal_base_height=(None if cfg.get("nominal_base_height", None) is None else float(cfg.get("nominal_base_height"))),
     )

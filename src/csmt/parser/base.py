@@ -107,6 +107,14 @@ def add_losses_options(parser):
     group.add_argument('--physics_ref_frames', type=int, default=5,
                        help='Number of initial frames used for per-sequence ground estimation '
                             'in mapping-free physics contact detection.')
+    group.add_argument('--physics_ground_mode', type=str, default='first_frames',
+                       choices=['first_frames', 'zero_nominal'],
+                       help='Ground reference mode for physics losses: first_frames uses per-sequence ground estimate; '
+                            'zero_nominal shifts each topology by nominal start height and uses fixed ground z=0.')
+    group.add_argument('--src_start_height', type=float, default=0.0,
+                       help='Nominal world-frame base height for source topology used by zero_nominal physics mode.')
+    group.add_argument('--dst_start_height', type=float, default=0.0,
+                       help='Nominal world-frame base height for destination topology used by zero_nominal physics mode.')
 
 def add_model_options(parser):
     group = parser.add_argument_group('Model options')

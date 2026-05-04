@@ -73,6 +73,7 @@ nbodies: 38
 #   [35] right_wrist_pitch_link
 #   [36] right_wrist_yaw_link
 #   [37] right_rubber_hand
+nominal_base_height: 0.75
 joint_limits:
   lower: [-1.57, -0.5236, -1.57, -0.087267, -0.87267, -0.2618, -1.57, -1.57, -1.57,
     -0.087267, -0.87267, -0.2618, -1.57, -0.52, -0.52, -3.0892, -0.6, -1.4, -1.0472,

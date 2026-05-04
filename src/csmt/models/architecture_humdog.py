@@ -62,6 +62,19 @@ class PAN_model(BaseModel):
                 lambda_sk = 0.0
         self.lambda_grounding = float(lambda_ground)
 
+        if isinstance(args, dict):
+            src_start_height = float(args.get('src_start_height', 0.0))
+            dst_start_height = float(args.get('dst_start_height', 0.0))
+            physics_ground_mode = str(args.get('physics_ground_mode', 'first_frames')).lower()
+        else:
+            src_start_height = float(getattr(args, 'src_start_height', 0.0))
+            dst_start_height = float(getattr(args, 'dst_start_height', 0.0))
+            physics_ground_mode = str(getattr(args, 'physics_ground_mode', 'first_frames')).lower()
+        if physics_ground_mode not in ('first_frames', 'zero_nominal'):
+            physics_ground_mode = 'first_frames'
+        self._nominal_start_height = {'src': src_start_height, 'dst': dst_start_height}
+        self._physics_ground_mode = physics_ground_mode
+
         # Physics loss flags — only active when lambdas > 0.
         # Uses args.src_end / args.dst_end as foot FK body indices.
         self.use_physics = (float(lambda_sk) > 0 or
@@ -716,7 +729,6 @@ class PAN_model(BaseModel):
         if self.use_physics and len(self.fake_pos) > 0:
             dt = 1.0 / 30.0
             ground_margin = getattr(self.args, 'ground_margin', 0.05)
-            use_ground_plane = getattr(self.args, 'use_ground_plane_contact', True)
             if isinstance(self.args, dict):
                 contact_ref_frames = max(1, int(self.args.get('physics_ref_frames', 10)))
             else:
@@ -724,6 +736,7 @@ class PAN_model(BaseModel):
                     contact_ref_frames = max(1, int(getattr(self.args, 'physics_ref_frames')))
                 except (AttributeError, KeyError):
                     contact_ref_frames = 10
+            physics_ground_mode = self._physics_ground_mode
 
             p = 0
             for src in range(self.n_topology):
@@ -742,25 +755,51 @@ class PAN_model(BaseModel):
                         p += 1
                         continue
 
-                    ground_mode = 'first_frames' if use_ground_plane else 'zero'
                     # Keep contact/ground estimates non-differentiable to prevent
                     # the model from shaping the gates instead of fixing motion.
                     with torch.no_grad():
+                        # Align destination FK global z to a nominal world frame where
+                        # base z at t=0 matches configured start height.
+                        dst_start_height = float(self._nominal_start_height.get(dst_name, 0.0))
+                        dst_base_z0 = fake_pos_p.detach()[:, :1, 0:1, 2]
+                        dst_z_shift = dst_start_height - dst_base_z0
+                        fake_pos_p_phys = fake_pos_p.detach().clone()
+                        fake_pos_p_phys[..., 2] = fake_pos_p_phys[..., 2] + dst_z_shift
+
+                        if physics_ground_mode == 'zero_nominal':
+                            dst_ground_mode = 'zero'
+                            dst_fixed_ground_z = 0.0
+                        else:
+                            dst_ground_mode = 'first_frames'
+                            dst_fixed_ground_z = 0.0
+
                         dst_contact, dst_ground_z = estimate_contact_from_height(
-                            fake_pos_p.detach(),
+                            fake_pos_p_phys,
                             dst_foot_idx,
                             ground_margin=ground_margin,
-                            ground_mode=ground_mode,
-                            fixed_ground_z=0.0,
+                            ground_mode=dst_ground_mode,
+                            fixed_ground_z=dst_fixed_ground_z,
                             ref_frames=contact_ref_frames,
                             smooth_steps=1,
                         )
+
                         if len(src_foot_idx) > 0:
+                            src_pos_phys = src_pos.detach()
+                            if physics_ground_mode == 'zero_nominal':
+                                src_start_height = float(self._nominal_start_height.get(src_name, 0.0))
+                                src_base_z0 = src_pos_phys[:, :1, 0:1, 2]
+                                src_z_shift = src_start_height - src_base_z0
+                                src_pos_phys = src_pos_phys.clone()
+                                src_pos_phys[..., 2] = src_pos_phys[..., 2] + src_z_shift
+                                src_ground_mode = 'zero'
+                            else:
+                                src_ground_mode = 'first_frames'
+
                             src_contact, _ = estimate_contact_from_height(
-                                src_pos.detach(),
+                                src_pos_phys,
                                 src_foot_idx,
                                 ground_margin=ground_margin,
-                                ground_mode=ground_mode,
+                                ground_mode=src_ground_mode,
                                 fixed_ground_z=0.0,
                                 ref_frames=contact_ref_frames,
                                 smooth_steps=1,
@@ -772,8 +811,6 @@ class PAN_model(BaseModel):
                                 device=dst_contact.device, dtype=dst_contact.dtype
                             )
 
-                        # gated_contact = dst_contact * src_time_gate
-
                         gated_contact_skating = dst_contact * src_time_gate
 
                         # source-gated only for grounding (broadcast over feet)
@@ -782,10 +819,11 @@ class PAN_model(BaseModel):
                     self.loss_recoder.add_scalar(f'src_contact_mean_{src_name}2{dst_name}', src_time_gate.mean())
                     self.loss_recoder.add_scalar(f'dst_contact_mean_{src_name}2{dst_name}', dst_contact.mean())
                     self.loss_recoder.add_scalar(f'gated_contact_mean_{src_name}2{dst_name}', gated_contact_skating.mean())
+                    self.loss_recoder.add_scalar(f'dst_z_shift_mean_{src_name}2{dst_name}', dst_z_shift.mean())
 
                     if lambda_skating > 0:
                         sk = skating_loss_from_contact(
-                            fake_pos_p,
+                            fake_pos_p_phys,
                             gated_contact_skating,
                             foot_indices=dst_foot_idx,
                             dt=dt,
@@ -796,7 +834,7 @@ class PAN_model(BaseModel):
 
                     if lambda_grounding > 0:
                         gp = grounding_loss_from_contact(
-                            fake_pos_p,
+                            fake_pos_p_phys,
                             grounding_gate,
                             foot_indices=dst_foot_idx,
                             ground_z=dst_ground_z,

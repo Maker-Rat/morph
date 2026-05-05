@@ -16,6 +16,7 @@
           <body name="FR_calf" pos="0 0 -0.213">
             <inertial pos="0.00629595 0.000622121 -0.141417" quat="0.703508 -0.00450087 0.00154099 0.710672" mass="0.241352" diaginertia="0.0014901 0.00146356 5.31397e-05" />
             <joint axis="0 1 0" damping="0.65" armature="0.01" range="-2.7227 -0.83776" name="FR_calf_joint" type="hinge" />
+            <body name="FR_foot" pos="0 0 -0.213" />
           </body>
         </body>
       </body>
@@ -28,6 +29,7 @@
           <body name="FL_calf" pos="0 0 -0.213">
             <inertial pos="0.00629595 -0.000622121 -0.141417" quat="0.710672 0.00154099 -0.00450087 0.703508" mass="0.241352" diaginertia="0.0014901 0.00146356 5.31397e-05" />
             <joint axis="0 1 0" damping="0.65" armature="0.01" range="-2.7227 -0.83776" name="FL_calf_joint" type="hinge" />
+            <body name="FL_foot" pos="0 0 -0.213" />
           </body>
         </body>
       </body>
@@ -40,6 +42,7 @@
           <body name="RR_calf" pos="0 0 -0.213">
             <inertial pos="0.00629595 0.000622121 -0.141417" quat="0.703508 -0.00450087 0.00154099 0.710672" mass="0.241352" diaginertia="0.0014901 0.00146356 5.31397e-05" />
             <joint axis="0 1 0" damping="0.65" armature="0.01" range="-2.7227 -0.83776" name="RR_calf_joint" type="hinge" />
+            <body name="RR_foot" pos="0 0 -0.213" />
           </body>
         </body>
       </body>
@@ -52,6 +55,7 @@
           <body name="RL_calf" pos="0 0 -0.213">
             <inertial pos="0.00629595 -0.000622121 -0.141417" quat="0.710672 0.00154099 -0.00450087 0.703508" mass="0.241352" diaginertia="0.0014901 0.00146356 5.31397e-05" />
             <joint axis="0 1 0" damping="0.65" armature="0.01" range="-2.7227 -0.83776" name="RL_calf_joint" type="hinge" />
+            <body name="RL_foot" pos="0 0 -0.213" />
           </body>
         </body>
       </body>

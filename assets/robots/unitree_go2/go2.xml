@@ -112,6 +112,7 @@
                             type="cylinder" class="collision" />
                         <geom pos="0 0 -0.213" mesh="foot" class="visual" material="black" />
                         <geom name="FR" class="foot" />
+                        <body name="FR_foot" pos="0 0 -0.213" />
                     </body>
                 </body>
             </body>
@@ -146,6 +147,7 @@
                             type="cylinder" class="collision" />
                         <geom pos="0 0 -0.213" mesh="foot" class="visual" material="black" />
                         <geom name="FL" class="foot" />
+                        <body name="FL_foot" pos="0 0 -0.213" />
                     </body>
                 </body>
             </body>
@@ -182,6 +184,7 @@
                             type="cylinder" class="collision" />
                         <geom pos="0 0 -0.213" mesh="foot" class="visual" material="black" />
                         <geom name="RR" class="foot" />
+                        <body name="RR_foot" pos="0 0 -0.213" />
                     </body>
                 </body>
             </body>
@@ -216,6 +219,7 @@
                             type="cylinder" class="collision" />
                         <geom pos="0 0 -0.213" mesh="foot" class="visual" material="black" />
                         <geom name="RL" class="foot" />
+                        <body name="RL_foot" pos="0 0 -0.213" />
                     </body>
                 </body>
             </body>

@@ -140,6 +140,79 @@ python -m csmt.pipelines.visualize_motion \
   --pkl ./demo_output/retargeted_go2_with_arm.pkl
 ```
 
+
+
+## 6.1) Visualize Contact Debug Overlay
+
+If you ran inference with `--save-contact-debug`, visualize per-foot contact confidence and source gating in the MuJoCo viewer:
+
+```bash
+python -m csmt.pipelines.visualize_motion \
+  --output-root . \
+  --robot-id go2 \
+  --pkl ./demo_output/retargeted_go2.pkl \
+  --contact-debug-npz ./demo_output/retargeted_go2_contact_debug.npz \
+  --loop
+```
+
+Viewer controls:
+- `c`: toggle contact overlay
+- `space`: pause/play
+- `r`: reset
+
+## 6.2) Visualize EE Target Overlay (Manip Debug)
+
+Use source-motion EE targets against the retargeted destination motion:
+
+```bash
+python -m csmt.pipelines.visualize_motion \
+  --output-root . \
+  --robot-id go2_with_arm \
+  --pkl ./demo_output/retargeted_go2_with_arm.pkl \
+  --ee-source-pkl ./data/raw/g1/manipulation/salut.pkl \
+  --ee-task-family manipulation \
+  --ee-pair-id g1_to_go2_with_arm \
+  --ee-target-mode displacement \
+  --ee-ref-frames 10 \
+  --ee-disp-scale-mode loss_ratio \
+  --loop
+```
+
+Viewer controls:
+- `e`: toggle EE overlay
+- `space`: pause/play
+- `r`: reset
+
+Notes:
+- If pair EE indices are empty, EE overlay is skipped.
+- `--ee-target-mode displacement` matches the displacement-style EE objective.
+
+## 6.3) Inference Flags for Debug Artifacts
+
+To generate debug artifacts used by overlays:
+
+```bash
+python -m csmt.pipelines.infer_teacher \
+  --output-root . \
+  --processed-dir ./data/processed/loco_g1_go2 \
+  --task-family locomotion \
+  --pair-id g1_to_go2 \
+  --teacher-dir ./runs/teacher_loco_g1_go2 \
+  --input-pkl ./data/raw/g1/locomotion/walk1_subject1.pkl \
+  --output-pkl ./demo_output/retargeted_go2.pkl \
+  --device cuda:0 \
+  --save-src-debug \
+  --save-contact-debug
+```
+
+This writes:
+- `*_src_rec.pkl`
+- `*_src_cyc.pkl`
+- `*_contact_debug.npz`
+- `*_contact_debug.png`
+- `*_contact_debug_z.png`
+- `*_contact_debug_xyz.png`
+
 ## 7) Resample Dataset FPS
 
 ```bash

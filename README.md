@@ -231,3 +231,77 @@ python -m csmt.pipelines.resample_dataset \
   --target-fps 30 \
   --src-fps 50
 ```
+
+## 8) Student RT Pipeline (Distill -> Train -> Infer)
+
+This section is the recommended baseline before moving to SMPL-input work.
+
+### 8.1 Create Distillation Dataset
+
+```bash
+python -m csmt.pipelines.create_distill_dataset \
+  --teacher_dir ./runs/teacher_mix_g1_go2_with_d1_v7 \
+  --processed-dir ./data/processed/mix_g1_go2_with_d1 \
+  --output_dir ./data/processed/distill_rt_g1_go2_d1_v2 \
+  --window 24 \
+  --prev_frames 4 \
+  --batch_size 64 \
+  --val_ratio 0.1
+```
+
+Notes:
+- `--prev_frames` should match `prev_len` in `configs/models/student_rt.yaml`.
+- Recreate distill data if you change `prev_len`.
+
+### 8.2 Train Student
+
+```bash
+python -m csmt.pipelines.train_student \
+  --output-root . \
+  --data-dir ./data/processed/distill_rt_g1_go2_d1_v2 \
+  --save-dir ./runs/student_rt_g1_go2_d1 \
+  --device cuda:0
+```
+
+Important student config knobs in `configs/models/student_rt.yaml`:
+- Capacity: `conv_channels`, `gru_hidden`
+- Robustness: `prev_context_mode`, `y_prev_noise_std`, `y_prev_noise_prob`
+- Root supervision: `root_motion_target_mode` (`source|teacher|blend`), `root_motion_blend_alpha`
+- Losses: `lambda_imitation`, `lambda_src_motion`, `lambda_smooth`, `lambda_joint_limit`
+
+### 8.3 Run Student Inference
+
+```bash
+python -m csmt.pipelines.infer_student_rt \
+  --output-root . \
+  --processed-dir ./data/processed/mix_g1_go2_with_d1 \
+  --task-family manipulation \
+  --pair-id g1_to_go2_with_d1 \
+  --student-ckpt ./runs/student_rt_g1_go2_d1/best.pt \
+  --input-pkl ./data/raw/g1/mixed_small/General_A1_-_Stand_stageii.pkl \
+  --output-pkl ./demo_output/student_go2_with_d1.pkl \
+  --device cuda:0 \
+  --root-motion-mode source \
+  --dst-start-height 0.28
+```
+
+Notes:
+- `--dst-start-height` can matter a lot for robots with different base offsets.
+- `--root-motion-mode` is inference-only and does not change training.
+
+### 8.4 Visualize Student Output
+
+```bash
+python -m csmt.pipelines.visualize_motion \
+  --output-root . \
+  --robot-id go2_with_d1 \
+  --pkl ./demo_output/student_go2_with_d1.pkl \
+  --loop
+```
+
+## 9) Baseline Before SMPL Refactor
+
+Before starting SMPL-input changes, keep one tagged baseline:
+- merge this stable RT student pipeline to `main`
+- create a git tag (example): `student-rt-g1-baseline`
+- start SMPL work in a new branch from that tag/commit

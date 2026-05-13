@@ -68,12 +68,18 @@ class StudentRT(nn.Module):
         gru_hidden=256,
         conv_kernel=3,
         conv_dropout=0.1,
+        use_attn=False,
+        attn_heads=4,
+        attn_dropout=0.1,
+        predict_residual=False,
     ):
         super().__init__()
         self.src_dim = int(src_dim)
         self.dst_dim = int(dst_dim)
         self.hist_len = int(hist_len)
         self.prev_len = int(prev_len)
+        self.use_attn = bool(use_attn)
+        self.predict_residual = bool(predict_residual)
 
         self.in_proj = nn.Conv1d(self.src_dim, conv_channels, kernel_size=1)
         self.res_blocks = nn.ModuleList([
@@ -88,6 +94,25 @@ class StudentRT(nn.Module):
             num_layers=1,
             batch_first=True,
         )
+
+        if self.use_attn:
+            if int(attn_heads) <= 0:
+                raise ValueError("attn_heads must be positive when use_attn is enabled")
+            self.temporal_attn = nn.MultiheadAttention(
+                embed_dim=gru_hidden,
+                num_heads=int(attn_heads),
+                dropout=float(attn_dropout),
+                batch_first=True,
+            )
+            self.attn_ln1 = nn.LayerNorm(gru_hidden)
+            self.attn_ff = nn.Sequential(
+                nn.Linear(gru_hidden, gru_hidden * 2),
+                nn.GELU(),
+                nn.Dropout(float(attn_dropout)),
+                nn.Linear(gru_hidden * 2, gru_hidden),
+            )
+            self.attn_ln2 = nn.LayerNorm(gru_hidden)
+            self.attn_dropout = nn.Dropout(float(attn_dropout))
 
         cond_dim = gru_hidden + self.prev_len * self.dst_dim
         self.head = nn.Sequential(
@@ -107,8 +132,23 @@ class StudentRT(nn.Module):
         x = x.transpose(1, 2)  # [B, W, C]
 
         gru_out, hidden_out = self.gru(x, hidden)  # [B, W, H]
+        if self.use_attn:
+            # Causal mask: token i cannot attend to j > i.
+            t_len = int(gru_out.shape[1])
+            attn_mask = torch.triu(
+                torch.ones((t_len, t_len), dtype=torch.bool, device=gru_out.device),
+                diagonal=1,
+            )
+            attn_out, _ = self.temporal_attn(
+                gru_out, gru_out, gru_out, attn_mask=attn_mask, need_weights=False
+            )
+            gru_out = self.attn_ln1(gru_out + self.attn_dropout(attn_out))
+            ff_out = self.attn_ff(gru_out)
+            gru_out = self.attn_ln2(gru_out + self.attn_dropout(ff_out))
+
         last_h = gru_out[:, -1, :]                 # [B, H]
         prev_flat = prev_out.reshape(prev_out.shape[0], -1)  # [B, P*dst_dim]
         y_pred = self.head(torch.cat([last_h, prev_flat], dim=-1))
+        if self.predict_residual and self.prev_len > 0 and prev_out.shape[1] > 0:
+            y_pred = prev_out[:, -1, :] + y_pred
         return y_pred, hidden_out
-

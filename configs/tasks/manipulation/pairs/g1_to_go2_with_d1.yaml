@@ -21,12 +21,13 @@ loss_overrides:
   lambda_skating: 50.0
   lambda_grounding: 100.0
   lambda_ee: 0.1
-  lambda_cycle: 0.5
-  lambda_cycle_motion: 10.0
+  lambda_cycle: 0.05
+  lambda_cycle_motion: 1000.0
   physics_ground_mode: zero_nominal
   ee_match_mode: disp
   ee_norm_mode: none
-  lambda_retar_vel: 100.0
+  lambda_retar_vel: 10.0
+  retar_vel_matching: mapping
 indices:
   src_feet: [7, 15]
   dst_feet: [4, 8, 12, 16]

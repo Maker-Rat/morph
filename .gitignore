@@ -70,3 +70,5 @@ logs/
 # *.mp4
 # *.gif
 # *.avi
+g1_test_motions/
+pkl_*.py

@@ -9,12 +9,12 @@ use_attn: true
 attn_heads: 4
 attn_dropout: 0.1
 predict_residual: false
-batch_size: 256
+batch_size: 128
 epochs: 100
 lambda_imitation: 5.0
 lambda_smooth: 0.1
-lambda_src_motion: 0.25
-root_motion_target_mode: source
+lambda_src_motion: 1.0
+root_motion_target_mode: blend
 root_motion_blend_alpha: 0.5
 lambda_joint_limit: 0.05
 joint_limit_threshold: 0.9

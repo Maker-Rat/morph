@@ -309,8 +309,19 @@ def create_sliding_windows(
     stride: int,
 ) -> Optional[Dict]:
     n_frames = len(base_trans)
-    if n_frames < window_size:
+    if n_frames <= 0:
         return None
+
+    # Keep short clips by right-padding with the last frame to one full window.
+    if n_frames < window_size:
+        pad = int(window_size - n_frames)
+        base_trans = np.pad(base_trans, ((0, pad), (0, 0)), mode="edge")
+        base_rot = np.pad(base_rot, ((0, pad), (0, 0)), mode="edge")
+        joint_pos = np.pad(joint_pos, ((0, pad), (0, 0)), mode="edge")
+        lin_vel_local = np.pad(lin_vel_local, ((0, pad), (0, 0)), mode="edge")
+        yaw_rate = np.pad(yaw_rate, ((0, pad), (0, 0)), mode="edge")
+        yaw = np.pad(yaw, (0, pad), mode="edge")
+        n_frames = int(window_size)
 
     n_windows = (n_frames - window_size) // stride + 1
     if n_windows <= 0:
@@ -381,7 +392,12 @@ def process_pkl_directory(
             segments = split_at_jumps(motion_data, jump_threshold) if handle_jumps else [motion_data]
 
             for segment in segments:
-                if len(segment) < min_segment_length:
+                seg_len = len(segment)
+                if seg_len <= 0:
+                    continue
+                # If a segment is shorter than the nominal minimum but also shorter than one
+                # full window, we still keep it via padding in create_sliding_windows().
+                if seg_len < min_segment_length and seg_len >= window_size:
                     continue
 
                 variants: List[List[Tuple]] = [segment]

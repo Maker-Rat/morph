@@ -1,0 +1,31 @@
+batch_size: 128
+epochs: 90
+num_workers: 4
+lr: 2.5e-4
+weight_decay: 1.0e-4
+
+# Model context lengths are derived from shard shapes at training time.
+# Keep these aligned with create_distill_dataset_smpl.py generation settings.
+hist_len: 24
+prev_len: 2
+conv_channels: 192
+gru_hidden: 384
+conv_kernel: 3
+conv_dropout: 0.10
+use_attn: true
+attn_heads: 4
+attn_dropout: 0.10
+
+lambda_imitation: 1.0
+lambda_smooth: 0.5
+lambda_root_motion: 0.5
+root_motion_target_mode: blend
+root_motion_blend_alpha: 0.25
+lambda_joint_limit: 0.01
+joint_limit_threshold: 0.9
+prev_context_mode: student
+y_prev_noise_std: 0.03
+y_prev_noise_prob: 0.8
+
+smpl_input_dim: 69
+device: cuda:0

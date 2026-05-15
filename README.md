@@ -305,3 +305,77 @@ Before starting SMPL-input changes, keep one tagged baseline:
 - merge this stable RT student pipeline to `main`
 - create a git tag (example): `student-rt-g1-baseline`
 - start SMPL work in a new branch from that tag/commit
+
+## 10) SMPL Student Pipeline (Paired SMPL + Source PKL)
+
+For the SMPL-input student, keep paired data with matching filename stems:
+
+```text
+data/raw/paired_smpl_g1/
+  smpl/
+    clip_0001.npz
+    clip_0002.npz
+    ...
+  g1_pkl/
+    clip_0001.pkl
+    clip_0002.pkl
+    ...
+```
+
+Pairing rule:
+- `smpl/<name>.npz` matches `g1_pkl/<name>.pkl`
+- unmatched files are ignored
+
+### 10.1 Create SMPL Distill Dataset
+
+```bash
+python -m csmt.pipelines.create_distill_dataset_smpl \
+  --output-root . \
+  --processed-dir ./data/processed/mix_g1_go2_with_d1 \
+  --task-family manipulation \
+  --pair-id g1_to_go2_with_d1 \
+  --teacher-dir ./runs/teacher_mix_g1_go2_with_d1_v7 \
+  --smpl-dir ./data/raw/paired_smpl_g1/smpl \
+  --src-pkl-dir ./data/raw/paired_smpl_g1/g1_pkl \
+  --output-dir ./data/processed/distill_smpl_rt_g1_go2_d1 \
+  --window 24 \
+  --prev-frames 4 \
+  --val-ratio 0.1
+```
+
+Notes:
+- This expects SMPL to include `pose_body` `[T,63]`, `root_orient` `[T,3]`, `trans` `[T,3]`.
+- By default, SMPL is automatically resampled to paired PKL FPS before distillation.
+- You can disable this behavior with `--no-resample-smpl-to-pkl-fps` (then fps mismatch clips are skipped).
+- `betas` are ignored in this version.
+
+### 10.2 Train SMPL Student
+
+```bash
+python -m csmt.pipelines.train_student_smpl \
+  --output-root . \
+  --data-dir ./data/processed/distill_smpl_rt_g1_go2_d1 \
+  --save-dir ./runs/student_smpl_g1_go2_d1 \
+  --device cuda:0
+```
+
+Main config:
+- `configs/models/student_smpl.yaml`
+- includes `smpl_input_dim: 72`
+- uses `lambda_root_motion` + `root_motion_target_mode` (`source|teacher|blend`)
+
+### 10.3 Run SMPL Student Inference
+
+```bash
+python -m csmt.pipelines.infer_student_smpl \
+  --output-root . \
+  --processed-dir ./data/processed/mix_g1_go2_with_d1 \
+  --task-family manipulation \
+  --pair-id g1_to_go2_with_d1 \
+  --student-ckpt ./runs/student_smpl_g1_go2_d1/best.pt \
+  --input-smpl ./data/raw/paired_smpl_g1/smpl/clip_0001.npz \
+  --output-pkl ./demo_output/student_smpl_go2_with_d1.pkl \
+  --device cuda:0 \
+  --root-motion-mode smpl \
+  --dst-start-height 0.28
+```

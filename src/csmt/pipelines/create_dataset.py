@@ -445,6 +445,57 @@ def process_pkl_directory(
     return {k: np.concatenate(v, axis=0) for k, v in all_data.items()}
 
 
+def _merge_tagged_sources(
+    sources: List[Tuple[Path, float]],
+    robot_id: str,
+    dt_default: float,
+    window_size: int,
+    stride: int,
+    handle_jumps: bool,
+    jump_threshold: float,
+    min_segment_length: int,
+    max_frames: Optional[int],
+    max_windows: Optional[int],
+    augment_mirror: bool,
+    mirror_specs: Dict[str, Dict[str, List]],
+) -> Dict:
+    merged_chunks: List[Dict] = []
+    total_windows = 0
+
+    for source_dir, ee_tag_value in sources:
+        if not source_dir.exists():
+            raise FileNotFoundError(f"pkl-dir not found: {source_dir}")
+
+        remaining = None if max_windows is None else max(0, int(max_windows - total_windows))
+        if remaining == 0:
+            break
+
+        data = process_pkl_directory(
+            pkl_dir=source_dir,
+            robot_id=robot_id,
+            dt_default=dt_default,
+            window_size=window_size,
+            stride=stride,
+            handle_jumps=handle_jumps,
+            jump_threshold=jump_threshold,
+            min_segment_length=min_segment_length,
+            max_frames=max_frames,
+            max_windows=remaining,
+            augment_mirror=augment_mirror,
+            mirror_specs=mirror_specs,
+        )
+        n = int(len(data["joint_pos"]))
+        data["ee_tag"] = np.full((n, 1), float(ee_tag_value), dtype=np.float32)
+        merged_chunks.append(data)
+        total_windows += n
+
+    if not merged_chunks:
+        raise ValueError("No valid data produced from provided PKL source directories.")
+
+    keys = list(merged_chunks[0].keys())
+    return {k: np.concatenate([chunk[k] for chunk in merged_chunks], axis=0) for k in keys}
+
+
 # ----------------------------------------------------------------------------
 # Save
 # ----------------------------------------------------------------------------
@@ -490,7 +541,7 @@ def _resolve_robot_paths(output_root: Path, robot_id: str) -> Tuple[Path, Path]:
 def _create_robot_dataset(
     output_root: Path,
     robot_id: str,
-    pkl_dir: Path,
+    pkl_sources: List[Tuple[Path, float]],
     processed_dir: Path,
     dt_default: float,
     window_size: int,
@@ -507,8 +558,8 @@ def _create_robot_dataset(
 ) -> Dict:
     source_xml, _ = _resolve_robot_paths(output_root, robot_id)
 
-    all_data = process_pkl_directory(
-        pkl_dir=pkl_dir,
+    all_data = _merge_tagged_sources(
+        sources=pkl_sources,
         robot_id=robot_id,
         dt_default=dt_default,
         window_size=window_size,
@@ -572,12 +623,18 @@ def parse_args() -> argparse.Namespace:
     # Single robot mode.
     p.add_argument("--robot", type=str, default=None)
     p.add_argument("--pkl-dir", type=str, default=None)
+    p.add_argument("--pkl-dir-locomotion", type=str, default=None)
+    p.add_argument("--pkl-dir-manipulation", type=str, default=None)
 
     # Explicit dual-robot mode.
     p.add_argument("--src-robot", type=str, default=None)
     p.add_argument("--src-pkl-dir", type=str, default=None)
     p.add_argument("--dst-robot", type=str, default=None)
     p.add_argument("--dst-pkl-dir", type=str, default=None)
+    p.add_argument("--src-pkl-dir-locomotion", type=str, default=None)
+    p.add_argument("--src-pkl-dir-manipulation", type=str, default=None)
+    p.add_argument("--dst-pkl-dir-locomotion", type=str, default=None)
+    p.add_argument("--dst-pkl-dir-manipulation", type=str, default=None)
 
     p.add_argument("--processed-dir", type=str, default=None,
                    help="Default: <output-root>/data/processed")
@@ -609,19 +666,34 @@ def parse_args() -> argparse.Namespace:
 
 def _resolve_mode(args: argparse.Namespace, output_root: Path):
     pair_mode = args.task_family is not None or args.pair_id is not None
-    single_mode = args.robot is not None or args.pkl_dir is not None
-    explicit_dual_mode = any([args.src_robot, args.src_pkl_dir, args.dst_robot, args.dst_pkl_dir])
+    single_mode = any([args.robot, args.pkl_dir, args.pkl_dir_locomotion, args.pkl_dir_manipulation])
+    explicit_dual_mode = any([
+        args.src_robot, args.src_pkl_dir, args.dst_robot, args.dst_pkl_dir,
+        args.src_pkl_dir_locomotion, args.src_pkl_dir_manipulation,
+        args.dst_pkl_dir_locomotion, args.dst_pkl_dir_manipulation,
+    ])
 
     if single_mode and explicit_dual_mode:
         raise ValueError("Use either single-robot args (--robot/--pkl-dir) or src/dst args, not both")
 
     if single_mode:
-        if args.robot is None or args.pkl_dir is None:
-            raise ValueError("Single-robot mode requires both --robot and --pkl-dir")
+        if args.robot is None:
+            raise ValueError("Single-robot mode requires --robot")
+        if args.pkl_dir_locomotion is not None or args.pkl_dir_manipulation is not None:
+            if args.pkl_dir_locomotion is None or args.pkl_dir_manipulation is None:
+                raise ValueError("Single-robot mixed mode requires both --pkl-dir-locomotion and --pkl-dir-manipulation")
+            pkl_sources = [
+                (Path(args.pkl_dir_locomotion).expanduser().resolve(), 0.0),
+                (Path(args.pkl_dir_manipulation).expanduser().resolve(), 1.0),
+            ]
+        else:
+            if args.pkl_dir is None:
+                raise ValueError("Single-robot mode requires --pkl-dir (or both --pkl-dir-locomotion and --pkl-dir-manipulation)")
+            pkl_sources = [(Path(args.pkl_dir).expanduser().resolve(), 1.0)]
         return {
             "mode": "single",
             "robot_id": str(args.robot),
-            "pkl_dir": Path(args.pkl_dir).expanduser().resolve(),
+            "pkl_sources": pkl_sources,
             "meta_name": f"{args.robot}_dataset_meta.json",
         }
 
@@ -629,28 +701,75 @@ def _resolve_mode(args: argparse.Namespace, output_root: Path):
         if args.task_family is None or args.pair_id is None:
             raise ValueError("Both --task-family and --pair-id are required when using pair shortcut")
         resolved = resolve_task_config(output_root, args.task_family, args.pair_id)
-        if args.src_pkl_dir is None or args.dst_pkl_dir is None:
-            raise ValueError("Pair shortcut mode requires --src-pkl-dir and --dst-pkl-dir")
+        if str(args.task_family).lower() == "manipulation":
+            if any(x is None for x in [
+                args.src_pkl_dir_locomotion, args.src_pkl_dir_manipulation,
+                args.dst_pkl_dir_locomotion, args.dst_pkl_dir_manipulation,
+            ]):
+                raise ValueError(
+                    "Manipulation pair mode requires:\n"
+                    "  --src-pkl-dir-locomotion --src-pkl-dir-manipulation\n"
+                    "  --dst-pkl-dir-locomotion --dst-pkl-dir-manipulation"
+                )
+            src_sources = [
+                (Path(args.src_pkl_dir_locomotion).expanduser().resolve(), 0.0),
+                (Path(args.src_pkl_dir_manipulation).expanduser().resolve(), 1.0),
+            ]
+            dst_sources = [
+                (Path(args.dst_pkl_dir_locomotion).expanduser().resolve(), 0.0),
+                (Path(args.dst_pkl_dir_manipulation).expanduser().resolve(), 1.0),
+            ]
+        else:
+            if args.src_pkl_dir is None or args.dst_pkl_dir is None:
+                raise ValueError("Pair shortcut mode requires --src-pkl-dir and --dst-pkl-dir")
+            src_sources = [(Path(args.src_pkl_dir).expanduser().resolve(), 1.0)]
+            dst_sources = [(Path(args.dst_pkl_dir).expanduser().resolve(), 1.0)]
         return {
             "mode": "dual",
             "src_robot": resolved.src_robot,
             "dst_robot": resolved.dst_robot,
-            "src_pkl_dir": Path(args.src_pkl_dir).expanduser().resolve(),
-            "dst_pkl_dir": Path(args.dst_pkl_dir).expanduser().resolve(),
+            "src_pkl_sources": src_sources,
+            "dst_pkl_sources": dst_sources,
             "meta_name": f"{args.task_family}_{args.pair_id}_dataset_meta.json",
             "task_family": args.task_family,
             "pair_id": args.pair_id,
         }
 
     if explicit_dual_mode:
-        if not all([args.src_robot, args.src_pkl_dir, args.dst_robot, args.dst_pkl_dir]):
-            raise ValueError("Explicit dual mode requires --src-robot --src-pkl-dir --dst-robot --dst-pkl-dir")
+        if not all([args.src_robot, args.dst_robot]):
+            raise ValueError("Explicit dual mode requires --src-robot and --dst-robot")
+        if any(x is not None for x in [
+            args.src_pkl_dir_locomotion, args.src_pkl_dir_manipulation,
+            args.dst_pkl_dir_locomotion, args.dst_pkl_dir_manipulation,
+        ]):
+            if any(x is None for x in [
+                args.src_pkl_dir_locomotion, args.src_pkl_dir_manipulation,
+                args.dst_pkl_dir_locomotion, args.dst_pkl_dir_manipulation,
+            ]):
+                raise ValueError(
+                    "Explicit dual mixed mode requires all four:\n"
+                    "  --src-pkl-dir-locomotion --src-pkl-dir-manipulation\n"
+                    "  --dst-pkl-dir-locomotion --dst-pkl-dir-manipulation"
+                )
+            src_sources = [
+                (Path(args.src_pkl_dir_locomotion).expanduser().resolve(), 0.0),
+                (Path(args.src_pkl_dir_manipulation).expanduser().resolve(), 1.0),
+            ]
+            dst_sources = [
+                (Path(args.dst_pkl_dir_locomotion).expanduser().resolve(), 0.0),
+                (Path(args.dst_pkl_dir_manipulation).expanduser().resolve(), 1.0),
+            ]
+        else:
+            if not all([args.src_pkl_dir, args.dst_pkl_dir]):
+                raise ValueError("Explicit dual mode requires --src-pkl-dir and --dst-pkl-dir (or all mixed-dir args)")
+            src_sources = [(Path(args.src_pkl_dir).expanduser().resolve(), 1.0)]
+            dst_sources = [(Path(args.dst_pkl_dir).expanduser().resolve(), 1.0)]
         return {
             "mode": "dual",
             "src_robot": str(args.src_robot),
             "dst_robot": str(args.dst_robot),
-            "src_pkl_dir": Path(args.src_pkl_dir).expanduser().resolve(),
-            "dst_pkl_dir": Path(args.dst_pkl_dir).expanduser().resolve(),
+            "src_pkl_sources": src_sources,
+            "dst_pkl_sources": dst_sources,
             "meta_name": f"{args.src_robot}_to_{args.dst_robot}_dataset_meta.json",
             "task_family": None,
             "pair_id": None,
@@ -659,8 +778,11 @@ def _resolve_mode(args: argparse.Namespace, output_root: Path):
     raise ValueError(
         "No valid mode selected. Use either:\n"
         "  1) --robot --pkl-dir\n"
+        "     or --robot with --pkl-dir-locomotion --pkl-dir-manipulation\n"
         "  2) --src-robot --src-pkl-dir --dst-robot --dst-pkl-dir\n"
-        "  3) --task-family --pair-id with --src-pkl-dir --dst-pkl-dir"
+        "     or with mixed dirs per robot (--*-pkl-dir-locomotion/manipulation)\n"
+        "  3) --task-family --pair-id with src/dst dirs\n"
+        "     (manipulation pair mode requires mixed dirs for both robots)"
     )
 
 
@@ -695,16 +817,25 @@ def main() -> None:
     print(f"  mirror augmentation: {args.augment_mirror}")
 
     if mode_cfg["mode"] == "single":
-        print(f"  robot: {mode_cfg['robot_id']}  from {mode_cfg['pkl_dir']}")
-        if not mode_cfg["pkl_dir"].exists():
-            raise FileNotFoundError(f"pkl-dir not found: {mode_cfg['pkl_dir']}")
+        print(f"  robot: {mode_cfg['robot_id']}")
+        for src_dir, tag in mode_cfg["pkl_sources"]:
+            tag_name = "manipulation" if float(tag) >= 0.5 else "locomotion"
+            print(f"    source ({tag_name}): {src_dir}")
+            if not src_dir.exists():
+                raise FileNotFoundError(f"pkl-dir not found: {src_dir}")
     else:
-        print(f"  src robot: {mode_cfg['src_robot']}  from {mode_cfg['src_pkl_dir']}")
-        print(f"  dst robot: {mode_cfg['dst_robot']}  from {mode_cfg['dst_pkl_dir']}")
-        if not mode_cfg["src_pkl_dir"].exists():
-            raise FileNotFoundError(f"src-pkl-dir not found: {mode_cfg['src_pkl_dir']}")
-        if not mode_cfg["dst_pkl_dir"].exists():
-            raise FileNotFoundError(f"dst-pkl-dir not found: {mode_cfg['dst_pkl_dir']}")
+        print(f"  src robot: {mode_cfg['src_robot']}")
+        for src_dir, tag in mode_cfg["src_pkl_sources"]:
+            tag_name = "manipulation" if float(tag) >= 0.5 else "locomotion"
+            print(f"    src source ({tag_name}): {src_dir}")
+            if not src_dir.exists():
+                raise FileNotFoundError(f"src-pkl-dir not found: {src_dir}")
+        print(f"  dst robot: {mode_cfg['dst_robot']}")
+        for dst_dir, tag in mode_cfg["dst_pkl_sources"]:
+            tag_name = "manipulation" if float(tag) >= 0.5 else "locomotion"
+            print(f"    dst source ({tag_name}): {dst_dir}")
+            if not dst_dir.exists():
+                raise FileNotFoundError(f"dst-pkl-dir not found: {dst_dir}")
 
     if args.dry_run:
         print("Dry-run mode enabled; no files written.")
@@ -714,7 +845,7 @@ def main() -> None:
         robot_summary = _create_robot_dataset(
             output_root=output_root,
             robot_id=mode_cfg["robot_id"],
-            pkl_dir=mode_cfg["pkl_dir"],
+            pkl_sources=mode_cfg["pkl_sources"],
             processed_dir=processed_dir,
             dt_default=float(args.dt_default),
             window_size=int(args.window_size),
@@ -746,7 +877,7 @@ def main() -> None:
     src_summary = _create_robot_dataset(
         output_root=output_root,
         robot_id=mode_cfg["src_robot"],
-        pkl_dir=mode_cfg["src_pkl_dir"],
+        pkl_sources=mode_cfg["src_pkl_sources"],
         processed_dir=processed_dir,
         dt_default=float(args.dt_default),
         window_size=int(args.window_size),
@@ -765,7 +896,7 @@ def main() -> None:
     dst_summary = _create_robot_dataset(
         output_root=output_root,
         robot_id=mode_cfg["dst_robot"],
-        pkl_dir=mode_cfg["dst_pkl_dir"],
+        pkl_sources=mode_cfg["dst_pkl_sources"],
         processed_dir=processed_dir,
         dt_default=float(args.dt_default),
         window_size=int(args.window_size),

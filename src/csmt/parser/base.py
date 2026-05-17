@@ -79,6 +79,10 @@ def add_losses_options(parser):
     group.add_argument('--lambda_retar_vel', type=float, default=1e3)
     group.add_argument('--lambda_ee', type=float, default=0.0,
                        help='Weight for end-effector matching loss on retargeted motion')
+    group.add_argument('--ee_weight_manip', type=float, default=1.0,
+                       help='Per-sample multiplier for EE loss when ee_tag=1 (manipulation clip).')
+    group.add_argument('--ee_weight_locomotion', type=float, default=0.0,
+                       help='Per-sample multiplier for EE loss when ee_tag=0 (locomotion clip).')
     group.add_argument('--joint_limit_threshold', type=float, default=0.85,
                        help='Soft joint-limit margin as a fraction of each joint range '
                             '(e.g., 0.85 starts penalizing near 85% of the limit).')

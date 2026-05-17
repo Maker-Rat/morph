@@ -121,15 +121,15 @@ def run_pan_training(parameters: dict, para_cmd: str | None = None) -> None:
         while flag:
             try:
                 dst_batch = next(dstfeeder)
-                input_d, _, d_offsets, d_offsets_withend = dst_batch[:4]
+                input_d, d_ee_gate, d_offsets, d_offsets_withend = dst_batch[:4]
             except StopIteration:
                 dstfeeder = iter(dstloader)
                 dst_batch = next(dstfeeder)
-                input_d, _, d_offsets, d_offsets_withend = dst_batch[:4]
+                input_d, d_ee_gate, d_offsets, d_offsets_withend = dst_batch[:4]
 
             try:
                 src_batch = next(srcfeeder)
-                input_h, _, h_offsets, h_offsets_withend = src_batch[:4]
+                input_h, h_ee_gate, h_offsets, h_offsets_withend = src_batch[:4]
             except StopIteration:
                 epoch += 1
                 flag = False
@@ -145,8 +145,8 @@ def run_pan_training(parameters: dict, para_cmd: str | None = None) -> None:
             input_h_encoder = (input_h[..., : src_njoints + vel_dim]).transpose(1, 2)
             input_d_encoder = (input_d[..., : dst_njoints + vel_dim]).transpose(1, 2)
 
-            input_h_encoder = (input_h_encoder, h_offsets, h_offsets_withend)
-            input_d_encoder = (input_d_encoder, d_offsets, d_offsets_withend)
+            input_h_encoder = (input_h_encoder, h_offsets, h_offsets_withend, h_ee_gate)
+            input_d_encoder = (input_d_encoder, d_offsets, d_offsets_withend, d_ee_gate)
 
             model.set_input([input_h_encoder, input_d_encoder])
             model.optimize_parameters()

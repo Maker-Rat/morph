@@ -146,11 +146,18 @@ class PAN_model(BaseModel):
         self.motions_input = []
         self.offsets = []
         self.offsets_withend = []
-        for i, (motion, offsets, offsets_withend) in enumerate(input):
+        self.ee_sample_weight_gates = []
+        for i, item in enumerate(input):
+            if len(item) >= 4:
+                motion, offsets, offsets_withend, ee_gate = item[:4]
+            else:
+                motion, offsets, offsets_withend = item
+                ee_gate = torch.ones((motion.shape[0], 1), dtype=motion.dtype, device=motion.device)
             # print("Data Input :", motion.shape)
             self.motions_input.append(motion.float().to(self.device))
             self.offsets.append(offsets.float().to(self.device))
             self.offsets_withend.append(offsets_withend.float().to(self.device))
+            self.ee_sample_weight_gates.append(ee_gate.float().to(self.device))
         
     def forward(self):
         self.motion = []
@@ -409,7 +416,8 @@ class PAN_model(BaseModel):
     def compute_ee_match_loss(self, src_ee, dst_ee,
                               mode='disp',
                               src_scale=None, dst_scale=None,
-                              eps=1e-8):
+                              eps=1e-8,
+                              sample_weight=None):
         """
         End-effector matching loss on base-relative FK positions.
 
@@ -483,12 +491,24 @@ class PAN_model(BaseModel):
                 axis_scale = torch.mean(torch.abs(src_sig), dim=(0, 1, 2), keepdim=True).detach().clamp_min(1e-2)
                 src_sig = src_sig / axis_scale
                 dst_sig = dst_sig / axis_scale
-            return self.mse(dst_sig, src_sig)
+            per_sample = torch.mean((dst_sig - src_sig) ** 2, dim=(1, 2, 3))
+            if sample_weight is None:
+                return per_sample.mean()
+            w = sample_weight.reshape(-1).to(per_sample.device).float()
+            w = torch.clamp(w, min=0.0)
+            denom = torch.clamp(w.sum(), min=1e-8)
+            return (per_sample * w).sum() / denom
 
         if mode == 'direction':
             src_dir = src_ee / (torch.norm(src_ee, dim=-1, keepdim=True) + eps)
             dst_dir = dst_ee / (torch.norm(dst_ee, dim=-1, keepdim=True) + eps)
-            return self.mse(dst_dir, src_dir)
+            per_sample = torch.mean((dst_dir - src_dir) ** 2, dim=(1, 2, 3))
+            if sample_weight is None:
+                return per_sample.mean()
+            w = sample_weight.reshape(-1).to(per_sample.device).float()
+            w = torch.clamp(w, min=0.0)
+            denom = torch.clamp(w.sum(), min=1e-8)
+            return (per_sample * w).sum() / denom
 
         raise ValueError(f"Unsupported ee_match_mode: {mode}")
 
@@ -711,13 +731,19 @@ class PAN_model(BaseModel):
                             src_local_cache=self.gt_local_pos[src],
                             dst_local_cache=self.fake_local_pos[p],
                         )
+                        gate = self.ee_sample_weight_gates[src]
+                        w_manip = float(getattr(self.args, 'ee_weight_manip', 1.0))
+                        w_loco = float(getattr(self.args, 'ee_weight_locomotion', 0.0))
+                        ee_weight = w_loco + (w_manip - w_loco) * gate
                         ee_i = self.compute_ee_match_loss(
                             src_ee_pts,
                             dst_ee_pts,
                             mode=ee_mode,
+                            sample_weight=ee_weight,
                         )
                         self.ee_loss = self.ee_loss + ee_i
                         self.loss_recoder.add_scalar(f'ee_loss_{src_name}2{dst_name}', ee_i)
+                        self.loss_recoder.add_scalar(f'ee_weight_mean_{src_name}2{dst_name}', ee_weight.mean())
 
                     if self.args.dis:
                         # Ensure data dimensions match the destination topology discriminator

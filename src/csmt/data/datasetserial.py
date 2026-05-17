@@ -56,6 +56,13 @@ class MotionDataset(Dataset):
         self.base_trans = torch.from_numpy(_data["base_trans"]).float()
         self.base_rot = torch.from_numpy(_data["base_rot"]).float()
         self.yaw = torch.from_numpy(_data["yaw"]).float()
+        if "ee_tag" in _data.files:
+            self.ee_tag = torch.from_numpy(_data["ee_tag"]).float()
+            if self.ee_tag.ndim == 1:
+                self.ee_tag = self.ee_tag.unsqueeze(-1)
+        else:
+            # Backward compatibility for older processed datasets.
+            self.ee_tag = torch.ones((self.joint_pos.shape[0], 1), dtype=torch.float32)
 
         # Normalization statistics (for model input features only)
         self.mean = torch.from_numpy(_stats["mean"]).float()
@@ -77,10 +84,10 @@ class MotionDataset(Dataset):
     def __getitem__(self, idx):
         motion_data = self.motion_data_norm[idx]
         offsets = self.offsets_flat
-        label = torch.zeros(1)
+        label = self.ee_tag[idx]
 
         # Keep return structure compatible with training loops (5-tuple).
-        return motion_data, torch.zeros(1), offsets, offsets, label
+        return motion_data, label, offsets, offsets, label
 
     def denorm(self, x: torch.Tensor, transpose: bool = False) -> torch.Tensor:
         if transpose:

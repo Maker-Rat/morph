@@ -61,6 +61,10 @@ def add_losses_options(parser):
     group.add_argument("--retar_vel_loss_type", type=str, default='linear')
     group.add_argument("--dis_loss_type", type=str, choices=["bce_gan", "l2_gan"], default='l2_gan')
     group.add_argument("--retar_vel_matching", type=str, default='direct', choices=["mapping", 'direct', 'direction'])
+    group.add_argument("--retar_vel_deadzone", type=float, default=0.05,
+                       help="Deadzone (m/s) used by retar_vel_matching=mapping before speed normalization.")
+    group.add_argument("--retar_vel_map_z", type=boolean_string, default=True,
+                       help="If False and retar_vel_matching=mapping, apply mapping-scale only to x/y; z is matched directly.")
 
     group.add_argument('--use_vae', action='store_true', default=False,
                        help='Enable VAE (adds mu/log_var heads and KL loss)')

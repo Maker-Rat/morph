@@ -638,21 +638,46 @@ class PAN_model(BaseModel):
                     retar_vector = self.fake_retar_denorm[p][..., dst_joints : dst_joints + 3]
 
                     eps = 1e-8
-                    src_min_vel = self._vel_min_t[src]
                     src_max_vel = self._vel_max_t[src]
-                    dst_min_vel = self._vel_min_t[dst]
                     dst_max_vel = self._vel_max_t[dst]
 
                     src_speed = torch.norm(src_vector, dim=-1, p=2, keepdim=True).clamp_min(eps)
                     dst_speed = torch.norm(retar_vector, dim=-1, p=2, keepdim=True).clamp_min(eps)
-                    src_vel_range = (src_max_vel - src_min_vel).clamp_min(eps)
-                    dst_vel_range = (dst_max_vel - dst_min_vel).clamp_min(eps)
+                    src_speed_xy = torch.norm(src_vector[..., :2], dim=-1, p=2, keepdim=True).clamp_min(eps)
+                    dst_speed_xy = torch.norm(retar_vector[..., :2], dim=-1, p=2, keepdim=True).clamp_min(eps)
 
-                    input_vel_scalar = (src_speed - src_min_vel) / src_vel_range
-                    retar_vel_scalar = (dst_speed - dst_min_vel) / dst_vel_range
+                    deadzone = float(getattr(self.args, 'retar_vel_deadzone', 0.05))
+                    deadzone_t = torch.tensor(deadzone, device=src_vector.device, dtype=src_vector.dtype)
+                    src_vmax_t = src_max_vel.to(device=src_vector.device, dtype=src_vector.dtype).clamp_min(deadzone + eps)
+                    dst_vmax_t = dst_max_vel.to(device=retar_vector.device, dtype=retar_vector.dtype).clamp_min(deadzone + eps)
 
-                    input_vel = input_vel_scalar * src_vector / src_speed
-                    retar_vel = retar_vel_scalar * retar_vector / dst_speed
+                    # Mapping mode: remove tiny standstill jitter (deadzone), then
+                    # normalize by per-topology vmax and clamp to [0, 1].
+                    input_vel_scalar = torch.clamp(
+                        torch.relu(src_speed_xy - deadzone_t) / (src_vmax_t - deadzone_t).clamp_min(eps),
+                        min=0.0,
+                        max=1.0,
+                    )
+                    retar_vel_scalar = torch.clamp(
+                        torch.relu(dst_speed_xy - deadzone_t) / (dst_vmax_t - deadzone_t).clamp_min(eps),
+                        min=0.0,
+                        max=1.0,
+                    )
+
+                    input_vel_xy = input_vel_scalar * src_vector[..., :2] / src_speed_xy
+                    retar_vel_xy = retar_vel_scalar * retar_vector[..., :2] / dst_speed_xy
+                    map_z = bool(getattr(self.args, 'retar_vel_map_z', True))
+                    if map_z:
+                        # Scale z with the same mapping scalar by preserving z direction sign.
+                        input_vel_z = input_vel_scalar * src_vector[..., 2:3] / src_speed
+                        retar_vel_z = retar_vel_scalar * retar_vector[..., 2:3] / dst_speed
+                    else:
+                        # Keep z unscaled (direct) while mapping only x/y.
+                        input_vel_z = src_vector[..., 2:3]
+                        retar_vel_z = retar_vector[..., 2:3]
+
+                    input_vel = torch.cat([input_vel_xy, input_vel_z], dim=-1)
+                    retar_vel = torch.cat([retar_vel_xy, retar_vel_z], dim=-1)
 
                     if self.args.retar_vel_matching == 'mapping':
                         retar_root_v_loss = self.criterion_root_v(input_vel, retar_vel)

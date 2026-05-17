@@ -27,6 +27,7 @@ from csmt.utils.smpl_features import (
     load_smpl_motion,
     parse_smpl_arrays,
     resample_smpl_tracks,
+    root_motion_4d_from_smpl_arrays,
 )
 from csmt.utils.utils import get_body_part
 
@@ -65,6 +66,15 @@ def parse_args() -> argparse.Namespace:
         "--no-resample-smpl-to-pkl-fps",
         dest="resample_smpl_to_pkl_fps",
         action="store_false",
+    )
+    p.add_argument(
+        "--smpl-root-map",
+        choices=["local", "world_z"],
+        default="world_z",
+        help=(
+            "SMPL source-root mapping stored in distill shards as src_root for "
+            "source/blend root supervision. world_z uses SMPL world z velocity for robot vertical motion."
+        ),
     )
     return p.parse_args()
 
@@ -339,6 +349,13 @@ def main() -> None:
                 continue
 
         smpl_feat = build_smpl_frame_features(pose_body, root_orient, trans, float(src_fps))
+        smpl_root4 = root_motion_4d_from_smpl_arrays(
+            pose_body=pose_body,
+            root_orient=root_orient,
+            trans=trans,
+            fps=float(src_fps),
+            mode=cli.smpl_root_map,
+        )
 
         t = min(int(smpl_feat.shape[0]), int(teacher_dst_norm.shape[0]))
         if t < max(2, int(cli.window)):
@@ -350,6 +367,7 @@ def main() -> None:
             src_seq=smpl_feat[:t].astype(np.float32),
             dst_seq=teacher_dst_norm[:t].astype(np.float32),
             clip_id=int(clip_id),
+            src_root_seq=smpl_root4[:t].astype(np.float32),
         )
         processed += 1
         if processed % 50 == 0:
@@ -397,6 +415,8 @@ def main() -> None:
         "fps_mismatch_skips": int(fps_skips),
         "fps_resampled": int(fps_resampled),
         "resample_smpl_to_pkl_fps": bool(cli.resample_smpl_to_pkl_fps),
+        "smpl_root_map": str(cli.smpl_root_map),
+        "src_root_key": "src_root",
         "train_samples": int(train_writer.total_samples),
         "val_samples": int(val_writer.total_samples),
         "train_shards": int(train_writer.shard_idx),

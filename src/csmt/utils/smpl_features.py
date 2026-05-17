@@ -153,6 +153,38 @@ def root_motion_4d_from_smpl_features(x_smpl: np.ndarray) -> np.ndarray:
     return np.concatenate([vx, vy, vz, yaw_rate], axis=-1).astype(np.float32)
 
 
+def root_motion_4d_from_smpl_arrays(
+    pose_body: np.ndarray,
+    root_orient: np.ndarray,
+    trans: np.ndarray,
+    fps: float,
+    mode: str = "local",
+) -> np.ndarray:
+    """
+    Build robot root motion [vx, vy, vz, yaw_rate] from SMPL arrays.
+
+    mode="local" preserves the legacy mapping:
+      robot vx <- SMPL root-local z
+      robot vy <- SMPL root-local x
+      robot vz <- SMPL root-local y
+
+    mode="world_z" preserves the legacy planar/yaw mapping but takes vertical
+    velocity from SMPL world z. This avoids root-local roll/pitch leakage making
+    walking/turning clips sink or float while still preserving jumps.
+    """
+    mode = str(mode).lower()
+    feat = build_smpl_frame_features(pose_body, root_orient, trans, fps)
+    root4 = root_motion_4d_from_smpl_features(feat)
+    if mode == "local":
+        return root4
+    if mode == "world_z":
+        world_vel = _compute_world_linear_vel(np.asarray(trans, dtype=np.float32), 1.0 / float(fps))
+        root4 = root4.copy()
+        root4[..., 2] = world_vel[..., 2]
+        return root4.astype(np.float32)
+    raise ValueError(f"Unsupported SMPL root motion map mode: {mode}")
+
+
 def _resample_linear_track(track: np.ndarray, t_src: np.ndarray, t_dst: np.ndarray) -> np.ndarray:
     """
     Linear interpolation for tracks shaped [T, D].

@@ -18,6 +18,11 @@ import yaml
 from csmt.models.student_rt import StudentRT
 from csmt.parser.base import try_mkdir
 
+try:
+    import wandb
+except Exception:  # pragma: no cover
+    wandb = None
+
 
 class DistillNpzDataset(Dataset):
     def __init__(self, files: List[str]):
@@ -433,6 +438,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--device", type=str, default=None)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--log-iter", type=int, default=100)
+    p.add_argument("--wandb-project", type=str, default=None)
+    p.add_argument("--wandb-entity", type=str, default=None)
+    p.add_argument("--wandb-run-name", type=str, default=None)
+    p.add_argument("--wandb-mode", type=str, default=None, choices=["online", "offline", "disabled"])
+    p.add_argument("--no-wandb", action="store_true")
     p.add_argument("--conv-channels", type=int, default=None)
     p.add_argument("--gru-hidden", type=int, default=None)
     p.add_argument("--conv-kernel", type=int, default=None)
@@ -489,6 +499,11 @@ def main() -> None:
         "attn_heads": int(model_cfg.get("attn_heads", 4)),
         "attn_dropout": float(model_cfg.get("attn_dropout", 0.1)),
         "predict_residual": bool(model_cfg.get("predict_residual", False)),
+        "wandb_enabled": bool(model_cfg.get("wandb_enabled", True)),
+        "wandb_project": str(model_cfg.get("wandb_project", "morph-students")),
+        "wandb_entity": model_cfg.get("wandb_entity", None),
+        "wandb_run_name": model_cfg.get("wandb_run_name", None),
+        "wandb_mode": str(model_cfg.get("wandb_mode", "online")),
     }
 
     if cli.batch_size is not None:
@@ -539,6 +554,16 @@ def main() -> None:
         params["use_attn"] = bool(cli.use_attn)
     if cli.predict_residual is not None:
         params["predict_residual"] = bool(cli.predict_residual)
+    if cli.wandb_project is not None:
+        params["wandb_project"] = str(cli.wandb_project)
+    if cli.wandb_entity is not None:
+        params["wandb_entity"] = str(cli.wandb_entity)
+    if cli.wandb_run_name is not None:
+        params["wandb_run_name"] = str(cli.wandb_run_name)
+    if cli.wandb_mode is not None:
+        params["wandb_mode"] = str(cli.wandb_mode)
+    if cli.no_wandb:
+        params["wandb_enabled"] = False
 
     for item in cli.set:
         if "=" not in item:
@@ -645,9 +670,36 @@ def main() -> None:
         "attn_heads": int(params["attn_heads"]),
         "attn_dropout": float(params["attn_dropout"]),
         "predict_residual": bool(params["predict_residual"]),
+        "wandb_enabled": bool(params["wandb_enabled"]),
+        "wandb_project": str(params["wandb_project"]),
+        "wandb_entity": params["wandb_entity"],
+        "wandb_run_name": params["wandb_run_name"],
+        "wandb_mode": str(params["wandb_mode"]),
     }
     with open(os.path.join(params["save_dir"], "student_config.json"), "w", encoding="utf-8") as f:
         json.dump(config, f, indent=2)
+
+    wandb_run = None
+    if bool(params["wandb_enabled"]):
+        if wandb is None:
+            print("[warn] wandb is not available; continuing without wandb logging.")
+        elif str(params["wandb_mode"]).lower() == "disabled":
+            print("[info] wandb mode is disabled; not starting a run.")
+        else:
+            run_name = params["wandb_run_name"] or Path(params["save_dir"]).name
+            try:
+                wandb_run = wandb.init(
+                    project=str(params["wandb_project"]),
+                    entity=params["wandb_entity"],
+                    name=str(run_name),
+                    config=config,
+                    mode=str(params["wandb_mode"]).lower(),
+                    dir=str(Path(params["save_dir"]).resolve()),
+                )
+                print(f"✓ WandB initialized: {params['wandb_project']}/{run_name}")
+            except Exception as exc:
+                print(f"[warn] Failed to initialize wandb: {type(exc).__name__}: {exc}")
+                wandb_run = None
 
     print("Starting student training...")
     for epoch in range(1, int(params["epochs"]) + 1):
@@ -730,6 +782,19 @@ def main() -> None:
                     f"sm={loss_sm.item():.6f} "
                     f"jl={loss_jl.item():.6f}"
                 )
+                if wandb_run is not None:
+                    wandb_run.log(
+                        {
+                            "train/step_loss": float(loss.item()),
+                            "train/imitation_joint": float(loss_im.item()),
+                            "train/src_motion": float(loss_src_motion.item()),
+                            "train/smooth": float(loss_sm.item()),
+                            "train/joint_limit": float(loss_jl.item()),
+                            "train/lr": float(optimizer.param_groups[0]["lr"]),
+                            "epoch": int(epoch),
+                            "step": int(state.step),
+                        }
+                    )
 
         scheduler.step()
         train_mean = epoch_loss / max(1, epoch_count)
@@ -754,6 +819,17 @@ def main() -> None:
         )
         lr_cur = optimizer.param_groups[0]["lr"]
         print(f"[epoch {epoch:03d}] train={train_mean:.6f} val={val_mean:.6f} lr={lr_cur:.6e}")
+        if wandb_run is not None:
+            wandb_run.log(
+                {
+                    "train/epoch_loss": float(train_mean),
+                    "val/loss": float(val_mean),
+                    "train/lr_epoch": float(lr_cur),
+                    "best/val_loss_so_far": float(min(state.best_val, val_mean)),
+                    "epoch": int(epoch),
+                    "step": int(state.step),
+                }
+            )
 
         ckpt = {
             "model": model.state_dict(),
@@ -773,6 +849,9 @@ def main() -> None:
     print("Training complete.")
     print(f"  best val loss: {state.best_val:.6f}")
     print(f"  checkpoints: {params['save_dir']}/best.pt, {params['save_dir']}/last.pt")
+    if wandb_run is not None:
+        wandb_run.summary["best_val_loss"] = float(state.best_val)
+        wandb_run.finish()
 
 
 if __name__ == "__main__":

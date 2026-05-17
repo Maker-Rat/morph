@@ -66,6 +66,8 @@ class DistillShardWriter:
         self.x_hist = []
         self.y_prev = []
         self.y_tgt = []
+        self.src_root = []
+        self.has_src_root = False
         self.clip_id = []
         self.frame_idx = []
 
@@ -73,20 +75,34 @@ class DistillShardWriter:
         if len(self.x_hist) == 0:
             return
         fn = os.path.join(self.output_dir, f"{self.split}_{self.shard_idx:04d}.npz")
-        np.savez_compressed(
-            fn,
-            x_hist=np.asarray(self.x_hist, dtype=np.float32),
-            y_prev=np.asarray(self.y_prev, dtype=np.float32),
-            y_tgt=np.asarray(self.y_tgt, dtype=np.float32),
-            clip_id=np.asarray(self.clip_id, dtype=np.int32),
-            frame_idx=np.asarray(self.frame_idx, dtype=np.int32),
-        )
+        payload = {
+            "x_hist": np.asarray(self.x_hist, dtype=np.float32),
+            "y_prev": np.asarray(self.y_prev, dtype=np.float32),
+            "y_tgt": np.asarray(self.y_tgt, dtype=np.float32),
+            "clip_id": np.asarray(self.clip_id, dtype=np.int32),
+            "frame_idx": np.asarray(self.frame_idx, dtype=np.int32),
+        }
+        if self.has_src_root:
+            payload["src_root"] = np.asarray(self.src_root, dtype=np.float32)
+        np.savez_compressed(fn, **payload)
         self.total_samples += len(self.x_hist)
         self.shard_idx += 1
         self._reset_buffers()
 
-    def add_sequence(self, src_seq: np.ndarray, dst_seq: np.ndarray, clip_id: int):
+    def add_sequence(
+        self,
+        src_seq: np.ndarray,
+        dst_seq: np.ndarray,
+        clip_id: int,
+        src_root_seq: np.ndarray | None = None,
+    ):
         t_len = min(int(src_seq.shape[0]), int(dst_seq.shape[0]))
+        if src_root_seq is not None:
+            src_root_seq = np.asarray(src_root_seq, dtype=np.float32)
+            if src_root_seq.ndim != 2 or src_root_seq.shape[1] != 4:
+                raise ValueError(f"Expected src_root_seq shape [T,4], got {src_root_seq.shape}")
+            t_len = min(t_len, int(src_root_seq.shape[0]))
+            self.has_src_root = True
         start_t = max(self.window - 1, 1)
         for t in range(start_t, t_len):
             x = src_seq[t - self.window + 1: t + 1]
@@ -102,6 +118,8 @@ class DistillShardWriter:
             self.x_hist.append(x)
             self.y_prev.append(y_prev)
             self.y_tgt.append(dst_seq[t])
+            if src_root_seq is not None:
+                self.src_root.append(src_root_seq[t])
             self.clip_id.append(int(clip_id))
             self.frame_idx.append(int(t))
 

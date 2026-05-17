@@ -18,7 +18,8 @@ from csmt.utils.smpl_features import (
     build_smpl_frame_features,
     load_smpl_motion,
     parse_smpl_arrays,
-    root_motion_4d_from_smpl_features,
+    resample_smpl_tracks,
+    root_motion_4d_from_smpl_arrays,
 )
 
 
@@ -127,10 +128,38 @@ def parse_args() -> argparse.Namespace:
         default="student",
         choices=["student", "smpl", "blend"],
     )
+    p.add_argument(
+        "--smpl-root-map",
+        type=str,
+        default="local",
+        choices=["local", "world_z"],
+        help=(
+            "SMPL-to-robot root mapping used by --root-motion-mode smpl/blend. "
+            "local is the legacy xyz permutation; world_z uses SMPL world z velocity for robot vertical motion."
+        ),
+    )
     p.add_argument("--root-blend-alpha", type=float, default=0.7)
     p.add_argument("--dst-start-height", type=float, default=None)
     p.add_argument("--smpl-stats", type=str, default=None,
                    help="Optional path to smpl_input_stats.npz to override checkpoint stats.")
+    p.add_argument(
+        "--smpl-low-std-threshold",
+        type=float,
+        default=1e-3,
+        help=(
+            "Before normalization, channels with SMPL train std below this threshold are clamped "
+            "to the train mean. Use 0 to disable. This protects video/FastSAM SMPL from huge z-scores."
+        ),
+    )
+    p.add_argument(
+        "--target-fps",
+        type=float,
+        default=0.0,
+        help=(
+            "If > 0, resample the input SMPL sequence to this FPS before feature extraction. "
+            "Use the FPS used during SMPL distillation, usually the paired GMR PKL FPS."
+        ),
+    )
     return p.parse_args()
 
 
@@ -200,6 +229,17 @@ def main() -> None:
 
     smpl_payload = load_smpl_motion(args.input_smpl)
     pose_body, root_orient, trans, fps = parse_smpl_arrays(smpl_payload)
+    input_fps = float(fps)
+    target_fps = float(args.target_fps)
+    if target_fps > 0.0 and abs(input_fps - target_fps) > 1e-6:
+        pose_body, root_orient, trans = resample_smpl_tracks(
+            pose_body=pose_body,
+            root_orient=root_orient,
+            trans=trans,
+            src_fps=input_fps,
+            dst_fps=target_fps,
+        )
+        fps = target_fps
     smpl_feat = build_smpl_frame_features(pose_body, root_orient, trans, fps)
     if int(args.max_frames) > 0:
         smpl_feat = smpl_feat[: int(args.max_frames)]
@@ -211,8 +251,19 @@ def main() -> None:
             f"expected smpl_input_dim={src_dim}, got {smpl_feat.shape[1]}; regenerate distill dataset"
         )
 
+    low_std_threshold = float(args.smpl_low_std_threshold)
+    low_std_mask = smpl_std < low_std_threshold if low_std_threshold > 0.0 else np.zeros_like(smpl_std, dtype=bool)
+    if np.any(low_std_mask):
+        smpl_feat = smpl_feat.copy()
+        smpl_feat[:, low_std_mask] = smpl_mean.reshape(1, -1)[:, low_std_mask]
     smpl_feat_norm = (smpl_feat - smpl_mean.reshape(1, -1)) / (smpl_std.reshape(1, -1) + 1e-8)
-    smpl_root4 = root_motion_4d_from_smpl_features(smpl_feat)
+    smpl_root4 = root_motion_4d_from_smpl_arrays(
+        pose_body=pose_body,
+        root_orient=root_orient,
+        trans=trans,
+        fps=fps,
+        mode=args.smpl_root_map,
+    )
     dst_root_start = int(dst_stats.njoints)
     dst_mean_root = dst_stats.mean[dst_root_start:dst_root_start + 4].detach().cpu().numpy().astype(np.float32)
     dst_std_root = dst_stats.std[dst_root_start:dst_root_start + 4].detach().cpu().numpy().astype(np.float32)
@@ -281,12 +332,18 @@ def main() -> None:
     print(f"  processed_root: {processed_root}")
     print(f"  dst_stats: {dst_stats_path}")
     print(f"  smpl_stats: {smpl_stats_origin}")
+    if target_fps > 0.0:
+        print(f"  smpl_fps: {input_fps:.6f} -> {float(fps):.6f}")
+    else:
+        print(f"  smpl_fps: {float(fps):.6f}")
     print(f"  frames: {t_len}")
     print(f"  dims: src={src_dim} dst={dst_dim} hist={hist_len} prev={prev_len}")
+    print(f"  smpl_low_std_clamped: {int(np.sum(low_std_mask))} channels (threshold={low_std_threshold:g})")
     print(
         f"  root_motion_mode: {args.root_motion_mode}"
         + (f" (alpha={blend_alpha:.2f})" if args.root_motion_mode == "blend" else "")
     )
+    print(f"  smpl_root_map: {args.smpl_root_map}")
 
 
 if __name__ == "__main__":

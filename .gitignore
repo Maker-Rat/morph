@@ -46,6 +46,7 @@ Thumbs.db
 # -----------------------------
 *.log
 wandb/
+temp/
 
 # -----------------------------
 # Training / inference artifacts

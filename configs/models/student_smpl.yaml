@@ -1,0 +1,42 @@
+batch_size: 256
+epochs: 100
+num_workers: 4
+lr: 5e-4
+weight_decay: 1.0e-4
+
+# Model context lengths for paired SMPL -> cleaned target PKL windows.
+hist_len: 24
+prev_len: 2
+conv_channels: 64
+gru_hidden: 128
+conv_kernel: 3
+conv_dropout: 0.10
+use_attn: false
+attn_heads: 4
+attn_dropout: 0.10
+
+lambda_imitation: 5.0
+lambda_smooth: 0.25
+lambda_root_motion: 1.0
+root_motion_target_mode: teacher
+root_motion_blend_alpha: 0.0
+lambda_joint_limit: 0.01
+joint_limit_threshold: 0.9
+prev_context_mode: student
+y_prev_noise_std: 0.025
+y_prev_noise_prob: 0.8
+
+smpl_input_dim: 69
+
+# Paired SMPL -> cleaned target PKL training defaults.
+balanced_sampling: true
+samples_per_epoch: 0
+smpl_root_map: world_z
+resample_smpl_to_dst_fps: true
+device: cuda:0
+
+wandb_enabled: true
+wandb_project: morph-students
+wandb_entity: null
+wandb_run_name: null
+wandb_mode: online

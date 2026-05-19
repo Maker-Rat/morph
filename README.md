@@ -6,12 +6,11 @@ The usual workflow is:
 
 ```text
 G1 PKLs + Go2 PKLs -> processed stats/windows -> teacher
-G1 PKLs -> teacher -> corrector/skate-comp -> cleaned Go2 PKLs
+G1 PKLs -> teacher/corrector/skate-comp -> cleaned Go2 PKLs
 paired G1 PKLs + cleaned Go2 PKLs -> RT student
 paired SMPL motions + cleaned Go2 PKLs -> SMPL student
 ```
 
-The current student pipelines are direct paired-data pipelines. They train on final target PKLs and do **not** require precomputed distillation shard NPZs.
 
 ## Environment Setup
 
@@ -23,7 +22,7 @@ conda activate morph
 pip install -e .
 ```
 
-This installs the package metadata name `morph`. The runtime module namespace is still `csmt`, so commands use `python -m csmt....`.
+This installs the package metadata name `morph`. The runtime module namespace is `csmt`, so commands use `python -m csmt....`.
 
 If you need CUDA-specific PyTorch wheels, reinstall `torch` after this step using the official PyTorch command for your CUDA version.
 
@@ -67,7 +66,7 @@ python -m csmt.tools.bootstrap_task_pair \
   --dst-robot go2
 ```
 
-After bootstrapping, edit the pair YAML manually for body/foot correspondences and loss weights.
+After bootstrapping, edit the pair YAML manually for body/foot correspondences and loss weights. Also validate nominal height in robot config yaml. 
 
 ## 2) Create Processed Dataset
 
@@ -137,6 +136,33 @@ python -m csmt.pipelines.infer_teacher \
   --no-save-src-debug
 ```
 
+Useful post-processing flags:
+
+```text
+--corrector-ckpt ./runs/corrector_loco_g1_go2/best.pt
+--apply-root-skate-comp
+```
+
+If both are used, the teacher output is corrected first and root skate compensation is applied at the end.
+
+## 5) Optional Corrector
+
+The corrector is an offline post-processor for teacher outputs. It is useful when you want to clean floating, penetration, and foot-skating artifacts before training students or trackers.
+
+```bash
+python -m csmt.pipelines.train_corrector \
+  --output-root . \
+  --processed-dir ./data/processed/loco_g1_go2 \
+  --task-family locomotion \
+  --pair-id g1_to_go2 \
+  --teacher-dir ./runs/teacher_loco_g1_go2 \
+  --input-pkl-dir ./data/student/loco_g1_go2/g1 \
+  --output-pkl-dir ./data/student/loco_g1_go2/go2 \
+  --device cuda:0 \
+  --dst-start-height 0.28 \
+  --no-save-src-debug
+```
+
 Useful final-cleaning flags:
 
 ```text
@@ -167,6 +193,14 @@ It does **not** train from prebuilt NPZ windows. During training it loads source
 ```bash
 python -m csmt.pipelines.train_corrector \
   --output-root . \
+  --robot-id go2 \
+  --pkl ./demo_output/teacher_go2.pkl \
+  --start-frame 300 \
+  --end-frame 600 \
+  --loop
+```
+
+If teacher inference was run with `--save-contact-debug`, you can overlay contact diagnostics:
   --processed-dir ./data/processed/loco_g1_go2 \
   --task-family locomotion \
   --pair-id g1_to_go2 \
@@ -185,6 +219,43 @@ For very long clips, cap or crop training:
 ```bash
 python -m csmt.pipelines.train_corrector \
   --output-root . \
+  --robot-id go2 \
+  --pkl ./demo_output/teacher_go2.pkl \
+  --contact-debug-npz ./demo_output/teacher_go2_contact_debug.npz \
+  --loop
+```
+
+Viewer controls:
+
+```text
+space: pause/play
+r: reset
+c: toggle contact overlay, if available
+```
+
+## 7) RT Student: Paired G1 PKL -> Cleaned Go2 PKL
+
+This is the normal real-time student. It consumes G1-style robot features and predicts Go2 references. It is the path used when the live system still goes through GMR:
+
+```text
+video/camera -> FastSAM SMPL -> GMR G1 PKL/frame -> RT student -> Go2
+```
+
+Expected paired folders:
+
+```text
+data/student/loco_g1_go2/
+  g1/
+    clip_0001.pkl
+    clip_0002.pkl
+  go2/
+    clip_0001.pkl
+    clip_0002.pkl
+```
+
+Pairing rule: `g1/<name>.pkl` matches `go2/<name>.pkl` by exact filename.
+
+Train:
   --processed-dir ./data/processed/loco_g1_go2 \
   --task-family locomotion \
   --pair-id g1_to_go2 \
@@ -226,7 +297,7 @@ The key design choice is that root correction is trajectory-based: the model edi
 After training, use the corrector through teacher inference:
 
 ```bash
-python -m csmt.pipelines.infer_teacher \
+python -m csmt.pipelines.train_student \
   --output-root . \
   --processed-dir ./data/processed/loco_g1_go2 \
   --task-family locomotion \
@@ -311,7 +382,7 @@ Pairing rule: `g1/<name>.pkl` matches `go2/<name>.pkl` by exact filename.
 Train:
 
 ```bash
-python -m csmt.pipelines.train_student \
+python -m csmt.pipelines.train_student_smpl \
   --output-root . \
   --processed-dir ./data/processed/loco_g1_go2 \
   --task-family locomotion \
@@ -343,7 +414,7 @@ Important knobs:
 Run inference:
 
 ```bash
-python -m csmt.pipelines.infer_student_rt \
+python -m csmt.pipelines.infer_student_smpl \
   --output-root . \
   --processed-dir ./data/processed/loco_g1_go2 \
   --task-family locomotion \

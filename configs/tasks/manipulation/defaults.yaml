@@ -9,3 +9,5 @@ loss_weights:
   lambda_skating: 0.0
   lambda_grounding: 0.0
   lambda_ee: 1.0
+  ee_weight_manip: 1.0
+  ee_weight_locomotion: 0.0

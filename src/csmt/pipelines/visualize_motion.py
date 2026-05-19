@@ -374,6 +374,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--pkl", type=str, default=None, help="Optional motion PKL path")
     p.add_argument("--xml", type=str, default=None, help="Override XML path")
     p.add_argument("--fps", type=float, default=None, help="Playback FPS override")
+    p.add_argument("--start-frame", type=int, default=0, help="First frame to visualize, inclusive.")
+    p.add_argument("--end-frame", type=int, default=0, help="End frame to visualize, exclusive. 0 means end of clip.")
     p.add_argument("--loop", action="store_true")
     p.add_argument("--quat-convention", choices=["xyzw", "wxyz"], default="xyzw")
     p.add_argument("--contact-debug-npz", type=str, default=None,
@@ -453,9 +455,19 @@ def main() -> None:
 
     pkl_path = Path(args.pkl).expanduser().resolve()
     dof_pos, root_pos, root_rot, fps_from_file = _load_motion(pkl_path)
-    n_frames = int(dof_pos.shape[0])
-    if n_frames == 0:
+    original_n_frames = int(dof_pos.shape[0])
+    if original_n_frames == 0:
         raise ValueError("Motion has zero frames")
+
+    start_frame = max(0, int(args.start_frame))
+    end_frame = int(args.end_frame) if int(args.end_frame) > 0 else original_n_frames
+    end_frame = min(original_n_frames, end_frame)
+    if start_frame >= end_frame:
+        raise ValueError(f"Invalid frame range [{start_frame}, {end_frame}) for {original_n_frames} frames")
+    dof_pos = dof_pos[start_frame:end_frame]
+    root_pos = root_pos[start_frame:end_frame]
+    root_rot = root_rot[start_frame:end_frame]
+    n_frames = int(dof_pos.shape[0])
 
     play_fps = float(args.fps) if args.fps is not None else float(fps_from_file if fps_from_file else 30.0)
     dt = 1.0 / max(play_fps, 1e-6)
@@ -464,7 +476,7 @@ def main() -> None:
     n_motion_joints = int(dof_pos.shape[1])
     map_dim = min(n_model_joints, n_motion_joints)
     print(f"PKL: {pkl_path}")
-    print(f"Frames: {n_frames}, playback_fps: {play_fps:.3f}")
+    print(f"Frames: {n_frames} from range [{start_frame}, {end_frame}) of {original_n_frames}, playback_fps: {play_fps:.3f}")
     print(f"Joint dims: motion={n_motion_joints}, model_non_free={n_model_joints}, mapped={map_dim}")
     if n_model_joints != n_motion_joints:
         print("[warn] Motion joint dim does not exactly match model non-free joints; using min(motion, model).")
@@ -472,6 +484,14 @@ def main() -> None:
     root_motion_mag = float(np.linalg.norm(root_pos[-1] - root_pos[0])) if n_frames > 1 else 0.0
     if (not has_free_base) and root_motion_mag > 1e-5:
         print("[warn] Motion has root translation, but XML has fixed base (no free joint). Root motion ignored.")
+
+    if contact_debug is not None:
+        contact_debug = ContactDebug(
+            dst_contact=contact_debug.dst_contact[start_frame:end_frame],
+            src_time_gate=contact_debug.src_time_gate[start_frame:end_frame],
+            gated_contact=contact_debug.gated_contact[start_frame:end_frame],
+            dst_feet_indices=contact_debug.dst_feet_indices,
+        )
 
     if args.ee_source_pkl is not None:
         if args.ee_task_family is None or args.ee_pair_id is None:
@@ -492,6 +512,11 @@ def main() -> None:
 
             src_pkl_path = Path(args.ee_source_pkl).expanduser().resolve()
             src_dof_pos, src_root_pos, src_root_rot, src_fps_from_file = _load_motion(src_pkl_path)
+            src_end_frame = min(int(src_dof_pos.shape[0]), end_frame)
+            src_start_frame = min(start_frame, src_end_frame)
+            src_dof_pos = src_dof_pos[src_start_frame:src_end_frame]
+            src_root_pos = src_root_pos[src_start_frame:src_end_frame]
+            src_root_rot = src_root_rot[src_start_frame:src_end_frame]
             src_fps = float(src_fps_from_file if src_fps_from_file else 30.0)
             src_motion_feat = _build_motion_features_from_pkl(src_dof_pos, src_root_pos, src_root_rot, src_fps)
 

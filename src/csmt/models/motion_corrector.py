@@ -64,6 +64,11 @@ class MotionCorrector(nn.Module):
             ))
         self.blocks = nn.Sequential(*blocks)
         self.out_proj = nn.Conv1d(hidden_dim, self.motion_dim, kernel_size=1)
+        # Start as an exact identity residual: corrected = input + 0.
+        # This is especially important when root velocity channels are editable,
+        # because random initial velocity deltas integrate into large root drift.
+        nn.init.zeros_(self.out_proj.weight)
+        nn.init.zeros_(self.out_proj.bias)
 
         scale = torch.full((self.motion_dim,), float(joint_delta_max), dtype=torch.float32)
         if self.motion_dim >= self.joint_dim + 3:

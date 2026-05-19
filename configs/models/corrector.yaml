@@ -1,23 +1,44 @@
 model_name: motion_corrector
-batch_size: 64
-epochs: 50
+
+batch_size: 4
+epochs: 100
 num_workers: 0
 lr: 0.0003
 weight_decay: 0.00001
 device: cuda:0
 
 hidden_dim: 192
-num_blocks: 4
+num_blocks: 6
 kernel_size: 5
 dropout: 0.1
-joint_delta_max: 0.35
-linvel_delta_max: 0.30
-yaw_delta_max: 0.80
 
-lambda_preserve: 1.0
-lambda_smooth: 0.1
-lambda_skating: 0.0
-lambda_grounding: 10.0
-lambda_joint_limits: 0.05
-ground_margin: 0.05
+# The feature vector is:
+#   [joint_angles | root_pos_xyz | yaw]
+# These max values bound residuals in those units.
+joint_delta_max: 0.5
+root_pos_delta_max: 0.75
+yaw_delta_max: 0.25
+
+# Root trajectory correction switches. Turn these off individually if needed.
+correct_root_motion: true
+correct_root_xy: true
+correct_root_z: true
+correct_root_yaw: true
+
+# 0 = full clips. Positive values randomly crop training windows.
+train_seq_len: 0
+eval_seq_len: 0
+
+lambda_preserve_joints: 1.0
+# Preserve teacher root local velocity/yaw-rate target from original teacher features.
+lambda_preserve_root_vel: 1.0
+lambda_smooth: 0.01
+lambda_skating: 0.25
+lambda_grounding: 25.0
+lambda_joint_limits: 0.01
+ground_margin: 0.04
 physics_ref_frames: 5
+
+wandb: false
+wandb_project: morph_corrector
+wandb_run_name: null

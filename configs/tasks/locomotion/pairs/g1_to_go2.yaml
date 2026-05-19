@@ -12,9 +12,16 @@ correspondence:
     src_joint_indices: [0, 1, 2, 3, 6, 7, 8, 9]
     dst_joint_indices: [3, 4, 5, 9, 10, 11, 0, 1, 2, 6, 7, 8]
 loss_overrides:
-  lambda_skating: 5.0
-  lambda_grounding: 500.0
+  lambda_skating: 0.5
+  lambda_grounding: 10.0
+  lambda_rec: 2.5
+  lambda_cycle: 0.1
+  lambda_cycle_motion: 100.0
   physics_ground_mode: zero_nominal
+  lambda_retar_vel: 250.0
+  retar_vel_matching: mapping
+  retar_vel_deadzone: 0.075
+  retar_vel_map_z: false
 indices:
   src_feet: [7, 15]
   dst_feet: [4, 8, 12, 16]

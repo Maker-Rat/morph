@@ -55,6 +55,7 @@ demo_output/
 outputs/
 checkpoints/
 logs/
+temp/
 
 # Optional: uncomment if you often store temporary media/model files outside data/
 # *.pt

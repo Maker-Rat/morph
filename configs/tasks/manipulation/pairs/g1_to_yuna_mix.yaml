@@ -1,0 +1,48 @@
+pair_id: g1_to_yuna_mix
+task_family: manipulation
+src_robot: g1
+dst_robot: yuna
+correspondence:
+  body_groups:
+  - name: legs_all
+    src_body_indices: [1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15]
+    dst_body_indices: [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
+  - name: left_arm
+    src_body_indices: [22, 23, 24, 25, 29]
+    dst_body_indices: [1, 2, 3, 4]
+  - name: right_arm
+    src_body_indices: [30, 31, 32, 33, 37]
+    dst_body_indices: [5, 6, 7, 8]
+
+  joint_groups:
+  - name: legs_all
+    src_joint_indices: [0, 1, 2, 3, 6, 7, 8, 9]
+    dst_joint_indices: [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+  - name: left_arm
+    src_joint_indices: [15, 16, 17, 18]
+    dst_joint_indices: [0, 1, 2]
+  - name: right_arm
+    src_joint_indices: [22, 23, 24, 25]
+    dst_joint_indices: [3, 4, 5]
+
+loss_overrides:
+  lambda_skating: 0.25
+  lambda_grounding: 5.0
+  lambda_ee: 0.05
+  lambda_rec: 2.5
+  lambda_cycle: 0.1
+  lambda_cycle_motion: 250.0
+  physics_ground_mode: zero_nominal
+  ee_match_mode: disp
+  ee_norm_mode: none
+  lambda_retar_vel: 250.0
+  retar_vel_matching: mapping
+  retar_vel_deadzone: 0.05
+  retar_vel_map_z: false
+  ee_weight_manip: 1.0
+  ee_weight_locomotion: 0.05
+indices:
+  src_feet: [7, 15]
+  dst_feet: [12, 16, 20, 24]
+  src_ee: [29, 37]
+  dst_ee: [4, 8]

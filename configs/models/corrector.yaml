@@ -15,8 +15,8 @@ dropout: 0.1
 # The feature vector is:
 #   [joint_angles | root_pos_xyz | yaw]
 # These max values bound residuals in those units.
-joint_delta_max: 0.5
-root_pos_delta_max: 0.75
+joint_delta_max: 1.0
+root_pos_delta_max: 1.0
 yaw_delta_max: 0.25
 
 # Root trajectory correction switches. Turn these off individually if needed.
@@ -29,14 +29,17 @@ correct_root_yaw: true
 train_seq_len: 0
 eval_seq_len: 0
 
-lambda_preserve_joints: 1.0
+lambda_preserve_joints: 2.5
 # Preserve teacher root local velocity/yaw-rate target from original teacher features.
-lambda_preserve_root_vel: 1.0
-lambda_smooth: 0.01
-lambda_skating: 0.25
+# Split so XY locomotion and vertical motion can be tuned independently.
+lambda_preserve_root_vel_xy: 0.25
+lambda_preserve_root_vel_z: 1.5
+lambda_preserve_root_yaw_rate: 0.5
+lambda_smooth: 0.0
+lambda_skating: 2.5
 lambda_grounding: 25.0
 lambda_joint_limits: 0.01
-ground_margin: 0.04
+ground_margin: 0.025
 physics_ref_frames: 5
 
 wandb: false

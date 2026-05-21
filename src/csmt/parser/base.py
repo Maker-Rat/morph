@@ -65,6 +65,10 @@ def add_losses_options(parser):
                        help="Deadzone (m/s) used by retar_vel_matching=mapping before speed normalization.")
     group.add_argument("--retar_vel_map_z", type=boolean_string, default=True,
                        help="If False and retar_vel_matching=mapping, apply mapping-scale only to x/y; z is matched directly.")
+    group.add_argument("--retar_vel_src_vmax_percentile", type=float, default=95.0,
+                       help="Source XY-speed percentile used as vmax for retar_vel_matching=mapping.")
+    group.add_argument("--retar_vel_dst_vmax_percentile", type=float, default=95.0,
+                       help="Destination XY-speed percentile used as vmax for retar_vel_matching=mapping.")
 
     group.add_argument('--use_vae', action='store_true', default=False,
                        help='Enable VAE (adds mu/log_var heads and KL loss)')

@@ -73,10 +73,17 @@ class MotionDataset(Dataset):
         self.motion_data_norm = (self.motion_data - self.mean) / (self.std + 1e-8)
         self.offsets_flat = torch.from_numpy(self.offsets).float().reshape(-1)
 
-        # Velocity range for retargeting velocity matching loss
-        vel_norms = self.lin_vel_local.norm(dim=-1)
-        self.min_vel = float(np.percentile(vel_norms.numpy(), 5))
-        self.max_vel = float(np.percentile(vel_norms.numpy(), 95))
+        # Velocity range for retargeting velocity mapping loss. Mapping mode
+        # normalizes planar speed, so compute vmax from XY speed as well.
+        vel_norms_xy = self.lin_vel_local[..., :2].norm(dim=-1).numpy()
+        if self.topology in ("src", "human"):
+            vmax_percentile = float(_pick("retar_vel_src_vmax_percentile", default=95.0))
+        else:
+            vmax_percentile = float(_pick("retar_vel_dst_vmax_percentile", default=95.0))
+        vmax_percentile = float(np.clip(vmax_percentile, 1.0, 100.0))
+        self.min_vel = float(np.percentile(vel_norms_xy, 5))
+        self.max_vel = float(np.percentile(vel_norms_xy, vmax_percentile))
+        self.vel_vmax_percentile = vmax_percentile
 
     def __len__(self):
         return len(self.joint_pos)

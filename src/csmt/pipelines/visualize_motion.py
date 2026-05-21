@@ -83,6 +83,7 @@ class ContactDebug:
     dst_feet_indices: np.ndarray # [K]
     src_time_gate: Optional[np.ndarray]
     dst_ground_z: Optional[float]
+    gated_contact: Optional[np.ndarray] = None  # [T, K], optional legacy/new debug field
 
 
 @dataclass
@@ -116,6 +117,14 @@ def _load_contact_debug(path: Path) -> ContactDebug:
     if "src_time_gate" in z:
         src_time_gate = np.asarray(z["src_time_gate"], dtype=np.float32).reshape(-1)
 
+    gated_contact = None
+    if "gated_contact" in z:
+        gated_contact = np.asarray(z["gated_contact"], dtype=np.float32)
+        if gated_contact.ndim == 1:
+            gated_contact = gated_contact[:, None]
+        if gated_contact.ndim != 2:
+            raise ValueError(f"gated_contact must be [T,K], got shape {gated_contact.shape}")
+
     dst_ground_z = None
     if "dst_ground_z" in z:
         g = np.asarray(z["dst_ground_z"], dtype=np.float32).reshape(-1)
@@ -127,6 +136,7 @@ def _load_contact_debug(path: Path) -> ContactDebug:
         dst_feet_indices=dst_feet_indices,
         src_time_gate=src_time_gate,
         dst_ground_z=dst_ground_z,
+        gated_contact=gated_contact,
     )
 
 
@@ -202,6 +212,61 @@ def _init_geom_plane_patch(geom, center: np.ndarray, z: float, rgba: np.ndarray)
         mat=np.eye(3, dtype=np.float64).reshape(-1),
         rgba=np.asarray(rgba, dtype=np.float32),
     )
+
+
+def _quat_to_xyzw(quat: np.ndarray, convention: str) -> np.ndarray:
+    q = np.asarray(quat, dtype=np.float64).reshape(4)
+    if convention == "wxyz":
+        return np.array([q[1], q[2], q[3], q[0]], dtype=np.float64)
+    return q
+
+
+def _yaw_from_quat(quat: np.ndarray, convention: str) -> float:
+    x, y, z, w = _quat_to_xyzw(quat, convention)
+    return float(np.arctan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z)))
+
+
+def _draw_heading_overlay(
+    viewer,
+    root_pos: np.ndarray,
+    root_quat: np.ndarray,
+    quat_convention: str,
+    length: float,
+    height: float,
+) -> int:
+    scn = viewer.user_scn
+    gidx = int(scn.ngeom)
+    maxgeom = int(scn.maxgeom)
+    if gidx >= maxgeom:
+        return gidx
+
+    base = np.asarray(root_pos, dtype=np.float64).reshape(3).copy()
+    base[2] += float(height)
+    yaw = _yaw_from_quat(root_quat, quat_convention)
+    tip = base + float(length) * np.array([np.cos(yaw), np.sin(yaw), 0.0], dtype=np.float64)
+
+    mujoco.mjv_initGeom(
+        scn.geoms[gidx],
+        type=mujoco.mjtGeom.mjGEOM_ARROW,
+        size=np.array([0.0, 0.0, 0.0], dtype=np.float64),
+        pos=np.zeros(3, dtype=np.float64),
+        mat=np.eye(3, dtype=np.float64).reshape(-1),
+        rgba=np.array([0.1, 0.35, 1.0, 0.95], dtype=np.float32),
+    )
+    mujoco.mjv_connector(scn.geoms[gidx], mujoco.mjtGeom.mjGEOM_ARROW, 0.035, base, tip)
+    gidx += 1
+
+    if gidx < maxgeom:
+        _init_geom_sphere(
+            scn.geoms[gidx],
+            tip,
+            0.035,
+            np.array([0.1, 0.35, 1.0, 0.95], dtype=np.float32),
+        )
+        gidx += 1
+
+    scn.ngeom = gidx
+    return gidx
 
 
 def _draw_contact_overlay(
@@ -378,6 +443,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--end-frame", type=int, default=0, help="End frame to visualize, exclusive. 0 means end of clip.")
     p.add_argument("--loop", action="store_true")
     p.add_argument("--quat-convention", choices=["xyzw", "wxyz"], default="xyzw")
+    p.add_argument("--heading-overlay", action="store_true",
+                   help="Draw the raw PKL root heading as a blue arrow in the MuJoCo scene")
+    p.add_argument("--heading-arrow-length", type=float, default=0.75,
+                   help="Length of --heading-overlay arrow")
+    p.add_argument("--heading-arrow-height", type=float, default=0.18,
+                   help="Height offset above root_pos for --heading-overlay arrow")
     p.add_argument("--contact-debug-npz", type=str, default=None,
                    help="Optional contact debug npz from infer_teacher --save-contact-debug")
     p.add_argument("--contact-marker-radius", type=float, default=0.028,
@@ -478,6 +549,8 @@ def main() -> None:
     print(f"PKL: {pkl_path}")
     print(f"Frames: {n_frames} from range [{start_frame}, {end_frame}) of {original_n_frames}, playback_fps: {play_fps:.3f}")
     print(f"Joint dims: motion={n_motion_joints}, model_non_free={n_model_joints}, mapped={map_dim}")
+    if args.heading_overlay:
+        print("Heading overlay: ON (blue arrow = raw root quaternion yaw; press 'h' to toggle)")
     if n_model_joints != n_motion_joints:
         print("[warn] Motion joint dim does not exactly match model non-free joints; using min(motion, model).")
 
@@ -486,11 +559,17 @@ def main() -> None:
         print("[warn] Motion has root translation, but XML has fixed base (no free joint). Root motion ignored.")
 
     if contact_debug is not None:
+        def _slice_optional(arr):
+            if arr is None:
+                return None
+            return arr[start_frame:min(end_frame, int(arr.shape[0]))]
+
         contact_debug = ContactDebug(
-            dst_contact=contact_debug.dst_contact[start_frame:end_frame],
-            src_time_gate=contact_debug.src_time_gate[start_frame:end_frame],
-            gated_contact=contact_debug.gated_contact[start_frame:end_frame],
+            dst_contact=contact_debug.dst_contact[start_frame:min(end_frame, int(contact_debug.dst_contact.shape[0]))],
             dst_feet_indices=contact_debug.dst_feet_indices,
+            src_time_gate=_slice_optional(contact_debug.src_time_gate),
+            dst_ground_z=contact_debug.dst_ground_z,
+            gated_contact=_slice_optional(contact_debug.gated_contact),
         )
 
     if args.ee_source_pkl is not None:
@@ -593,6 +672,7 @@ def main() -> None:
     paused = [False]
     show_contact_overlay = [True]
     show_ee_overlay = [True]
+    show_heading_overlay = [bool(args.heading_overlay)]
 
     def apply_frame(k: int) -> None:
         if has_free_base:
@@ -616,6 +696,9 @@ def main() -> None:
         elif key in (ord("e"), ord("E")):
             show_ee_overlay[0] = not show_ee_overlay[0]
             print("EE overlay ON" if show_ee_overlay[0] else "EE overlay OFF")
+        elif key in (ord("h"), ord("H")):
+            show_heading_overlay[0] = not show_heading_overlay[0]
+            print("Heading overlay ON" if show_heading_overlay[0] else "Heading overlay OFF")
 
     with mujoco.viewer.launch_passive(model, data, key_callback=key_callback) as viewer:
         viewer.cam.distance = 2.8
@@ -625,6 +708,16 @@ def main() -> None:
         while viewer.is_running():
             apply_frame(frame[0])
             viewer.user_scn.ngeom = 0
+
+            if show_heading_overlay[0]:
+                _draw_heading_overlay(
+                    viewer=viewer,
+                    root_pos=root_pos[frame[0]],
+                    root_quat=root_rot[frame[0]],
+                    quat_convention=args.quat_convention,
+                    length=float(args.heading_arrow_length),
+                    height=float(args.heading_arrow_height),
+                )
 
             if contact_debug is not None:
                 if show_contact_overlay[0]:

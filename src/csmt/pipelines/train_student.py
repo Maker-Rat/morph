@@ -38,6 +38,15 @@ class MotionStats:
             nbodies = int(payload["n_bodies"]) if "n_bodies" in payload else int(len(self.parents))
         self.njoints = int(njoints)
         self.nbodies = int(nbodies)
+        if "root_ang_dim" in payload.files:
+            self.root_ang_dim = int(np.asarray(payload["root_ang_dim"]).item())
+        else:
+            self.root_ang_dim = int(self.mean.shape[0] - self.njoints - 3)
+            if self.root_ang_dim <= 0:
+                self.root_ang_dim = 1
+        self.root_dim = int(3 + self.root_ang_dim)
+        self.motion_dim = int(self.njoints + self.root_dim)
+        self.root_ang_features = str(np.asarray(payload["root_ang_features"]).item()) if "root_ang_features" in payload.files else ("rpy" if self.root_ang_dim == 3 else "yaw")
 
 
 class StudentWindowDataset(Dataset):
@@ -230,10 +239,15 @@ def _world_vel_to_local(lin_vel_world: np.ndarray, yaw: np.ndarray) -> np.ndarra
     return lin_vel_local
 
 
+def _compute_angle_rate(angles: np.ndarray, dt: float) -> np.ndarray:
+    angles = np.asarray(angles, dtype=np.float32)
+    diff = np.diff(angles, axis=0, prepend=angles[:1])
+    diff = np.arctan2(np.sin(diff), np.cos(diff))
+    return (diff / dt).astype(np.float32)
+
+
 def _compute_yaw_rate(yaw: np.ndarray, dt: float) -> np.ndarray:
-    yaw_diff = np.diff(yaw, prepend=yaw[0])
-    yaw_diff = np.arctan2(np.sin(yaw_diff), np.cos(yaw_diff))
-    return (yaw_diff / dt).astype(np.float32)
+    return _compute_angle_rate(yaw[:, None], dt)[:, 0]
 
 
 def _pkl_to_normalized_features(path: Path, stats: MotionStats, max_frames: int) -> tuple[np.ndarray, float]:
@@ -248,8 +262,13 @@ def _pkl_to_normalized_features(path: Path, stats: MotionStats, max_frames: int)
     dt = 1.0 / max(float(fps), 1e-8)
     yaw = _extract_yaw(heading_rot)
     lin_vel_local = _world_vel_to_local(_compute_world_linear_vel(root_pos, dt), yaw)
-    yaw_rate = _compute_yaw_rate(yaw, dt)
-    motion = np.concatenate([joint_pos, lin_vel_local, yaw_rate[:, None]], axis=-1).astype(np.float32)
+    if int(stats.root_ang_dim) == 3:
+        from scipy.spatial.transform import Rotation as R
+        rpy = R.from_quat(np.asarray(heading_rot, dtype=np.float32)).as_euler("xyz", degrees=False).astype(np.float32)
+        root_ang_rate = _compute_angle_rate(rpy, dt)
+    else:
+        root_ang_rate = _compute_yaw_rate(yaw, dt)[:, None]
+    motion = np.concatenate([joint_pos, lin_vel_local, root_ang_rate], axis=-1).astype(np.float32)
     mean = stats.mean.detach().cpu().numpy().astype(np.float32)
     std = np.maximum(stats.std.detach().cpu().numpy().astype(np.float32), 1e-8)
     motion_norm = (motion - mean) / std
@@ -464,9 +483,9 @@ def _compute_losses(model, x_hist, y_prev, y_tgt, params, src_njoints, dst_njoin
 
     y_hat, _ = model(x_hist, y_prev_in)
     loss_im = nn.functional.mse_loss(y_hat[:, :dst_njoints], y_tgt[:, :dst_njoints])
-    src_root = x_hist[:, -1, src_njoints:src_njoints + 4]
-    dst_label_root = y_tgt[:, dst_njoints:dst_njoints + 4]
-    dst_root = y_hat[:, dst_njoints:dst_njoints + 4]
+    src_root = x_hist[:, -1, src_njoints:]
+    dst_label_root = y_tgt[:, dst_njoints:]
+    dst_root = y_hat[:, dst_njoints:]
     root_target = _root_motion_target(src_root, dst_label_root, params["root_motion_target_mode"], params["root_motion_blend_alpha"])
     loss_root = nn.functional.mse_loss(dst_root, root_target)
     loss_jl = _joint_limit_loss_normalized(y_hat[:, :dst_njoints], dst_lo, dst_hi, float(params["joint_limit_threshold"]))

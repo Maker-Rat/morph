@@ -32,8 +32,8 @@ class MotionCorrector(nn.Module):
     """
     Residual temporal corrector.
 
-    Input/Output both in denormalized motion feature space:
-      [joint_angles (J) | lin_vel_local (3) | yaw_rate (1)].
+    Input/Output both in denormalized trajectory space:
+      [joint_angles (J) | root_pos_xyz (3) | yaw (1)].
     """
     def __init__(
         self,

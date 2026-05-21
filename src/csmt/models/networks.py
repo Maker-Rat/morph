@@ -67,7 +67,8 @@ class MotionEncoder(nn.Module):
         self.args = args
         self.correspondence = correspondence
         self.nparts = len(correspondence)
-        self.nroot_features = 4  # 3 lin_vel_local + 1 yaw_rate
+        self.root_ang_dim = int(getattr(args, "root_ang_dim", 1))
+        self.nroot_features = 3 + self.root_ang_dim  # 3 lin_vel_local + angular rates
         self.njoints_only = njoints  # pure joint count, root NOT included
         self.njoints = njoints       # alias kept for BodyPartConv compatibility
 
@@ -82,7 +83,7 @@ class MotionEncoder(nn.Module):
 
         device = torch.device("cuda:0" if (torch.cuda.is_available()) else 'cpu')
 
-        # Token layout: [body_parts (nparts) | joints (njoints) | linvel (1) | yaw_rate (1)]
+        # Token layout: [body_parts (nparts) | joints (njoints) | linvel (1) | ang_rate (1)]
         self.register_buffer('attention_mask', get_transformer_matrix(correspondence, njoints))
         # conv residual mask uses pure joint count only
 
@@ -103,7 +104,7 @@ class MotionEncoder(nn.Module):
             nn.Linear(hid_dim, self.latent_dim)
         )
         self.yaw_proj = nn.Sequential(
-            nn.Linear(1, hid_dim),
+            nn.Linear(self.root_ang_dim, hid_dim),
             nn.ReLU(),
             nn.Linear(hid_dim, self.latent_dim)
         )
@@ -156,10 +157,10 @@ class MotionEncoder(nn.Module):
             x = torch.cat((x, torch.zeros_like(x[:, [0], :])), dim=1)  # B C T
 
         # Split joint angles and root features
-        # x: [B, njoints_only + 4, T]
+        # x: [B, njoints_only + 3 + root_ang_dim, T]
         joint_x  = x[:, :self.njoints_only, :]                              # [B, njoints_only, T]
         linvel_x = x[:, self.njoints_only:self.njoints_only + 3, :]          # [B, 3, T]
-        yaw_x    = x[:, self.njoints_only + 3:self.njoints_only + 4, :]      # [B, 1, T]
+        yaw_x    = x[:, self.njoints_only + 3:self.njoints_only + 3 + self.root_ang_dim, :]  # [B, root_ang_dim, T]
 
         raw_x = x.clone()  # used for residual conv 
 
@@ -177,14 +178,14 @@ class MotionEncoder(nn.Module):
         linvel_in = linvel_x.permute(0, 2, 1).reshape(BT, 3)        # [BT, 3]
         linvel_token = self.linvel_proj(linvel_in).unsqueeze(0)      # [1, BT, latent_dim]
 
-        # --- yaw_rate token: project [B, 1, T] → [1, BT, latent_dim] ---
-        yaw_in    = yaw_x.permute(0, 2, 1).reshape(BT, 1)            # [BT, 1]
+        # --- angular-rate token: project [B, root_ang_dim, T] → [1, BT, latent_dim] ---
+        yaw_in    = yaw_x.permute(0, 2, 1).reshape(BT, self.root_ang_dim)
         yaw_token = self.yaw_proj(yaw_in).unsqueeze(0)                # [1, BT, latent_dim]
 
         # --- Body part learnable tokens ---
         body_part_tokens = self.parameter_part.repeat(1, BT, 1)      # [nparts, BT, latent_dim]
 
-        # Token layout: [body_parts | joints | linvel | yaw_rate]
+        # Token layout: [body_parts | joints | linvel | ang_rate]
         encoding_app = torch.cat(
             [body_part_tokens, joint_tokens, linvel_token, yaw_token], dim=0
         )  # [nparts + njoints + 2, BT, latent_dim]
@@ -199,7 +200,7 @@ class MotionEncoder(nn.Module):
         final_parts = self.act_f(residual_connection + final_parts)
         final_parts = self.act_f(self.conv2(final_parts))
 
-        # Extract linvel and yaw_rate tokens, merge into single root stream
+        # Extract linvel and angular-rate tokens, merge into single root stream
         linvel_latent = final[-2].reshape(b_size, t_size, -1).transpose(1, 2)  # [B, D, T]
         yaw_latent    = final[-1].reshape(b_size, t_size, -1).transpose(1, 2)  # [B, D, T]
 
@@ -247,7 +248,7 @@ class MotionDecoder(nn.Module):
         self.yaw_head = nn.Sequential(
             nn.Linear(enc.latent_dim, hid_dim),
             nn.ReLU(),
-            nn.Linear(hid_dim, 1)
+            nn.Linear(hid_dim, enc.root_ang_dim)
         )
 
         self.layers = nn.ModuleList()
@@ -303,7 +304,7 @@ class MotionDecoder(nn.Module):
                                 size=T, mode='linear',
                                 align_corners=False).permute(0, 2, 1)     # [B, T, 1]
 
-        return torch.cat([joint_out, linvel_out, yaw_out], dim=-1)  # [B, T, njoints+4]
+        return torch.cat([joint_out, linvel_out, yaw_out], dim=-1)
 
 
 class SkeletonEncoder(nn.Module):

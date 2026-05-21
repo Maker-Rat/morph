@@ -217,10 +217,10 @@ def _joint_limit_loss(
 
 
 def _features_to_trajectory(motion_denorm: torch.Tensor, njoints: int, dt: float = 1.0 / 30.0) -> torch.Tensor:
-    """Convert [q, local lin vel xyz, yaw rate] to [q, root pos xyz, yaw]."""
+    """Convert [q, local lin vel xyz, angular rates] to [q, root pos xyz, yaw]."""
     q = motion_denorm[..., :njoints]
     lin_vel_local = motion_denorm[..., njoints:njoints + 3]
-    yaw_rate = motion_denorm[..., njoints + 3]
+    yaw_rate = motion_denorm[..., -1]
     yaw = torch.cumsum(yaw_rate * dt, dim=1)
 
     cos_yaw = torch.cos(yaw)
@@ -830,7 +830,9 @@ def main() -> None:
 
             preserve_j = _masked_mse(corrected_denorm[..., :dst_njoints], teacher_batch[..., :dst_njoints], mask)
             corrected_root_vel = _trajectory_root_velocity_local(corrected_denorm, dst_njoints)
-            teacher_root_vel = teacher_features[:, 1:, dst_njoints:dst_njoints + 4]
+            teacher_lin_vel = teacher_features[:, 1:, dst_njoints:dst_njoints + 3]
+            teacher_yaw_rate = teacher_features[:, 1:, -1:]
+            teacher_root_vel = torch.cat([teacher_lin_vel, teacher_yaw_rate], dim=-1)
             root_vel_mask = mask[:, 1:]
             preserve_root_vel_xy = _masked_mse_pair(corrected_root_vel[..., :2], teacher_root_vel[..., :2], root_vel_mask)
             preserve_root_vel_z = _masked_mse_pair(corrected_root_vel[..., 2:3], teacher_root_vel[..., 2:3], root_vel_mask)

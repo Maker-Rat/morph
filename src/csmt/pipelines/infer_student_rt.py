@@ -38,6 +38,15 @@ class InferenceStats:
 
         self.njoints = int(njoints)
         self.nbodies = int(nbodies)
+        if "root_ang_dim" in payload.files:
+            self.root_ang_dim = int(np.asarray(payload["root_ang_dim"]).item())
+        else:
+            self.root_ang_dim = int(self.mean.shape[0] - self.njoints - 3)
+            if self.root_ang_dim <= 0:
+                self.root_ang_dim = 1
+        self.root_dim = int(3 + self.root_ang_dim)
+        self.motion_dim = int(self.njoints + self.root_dim)
+        self.root_ang_features = str(np.asarray(payload["root_ang_features"]).item()) if "root_ang_features" in payload.files else ("rpy" if self.root_ang_dim == 3 else "yaw")
 
     def denorm(self, x: torch.Tensor) -> torch.Tensor:
         mean = self.mean.to(x.device)
@@ -120,10 +129,15 @@ def _world_vel_to_local(lin_vel_world: np.ndarray, yaw: np.ndarray) -> np.ndarra
     return lin_vel_local
 
 
+def _compute_angle_rate(angles: np.ndarray, dt: float) -> np.ndarray:
+    angles = np.asarray(angles, dtype=np.float32)
+    diff = np.diff(angles, axis=0, prepend=angles[:1])
+    diff = np.arctan2(np.sin(diff), np.cos(diff))
+    return (diff / dt).astype(np.float32)
+
+
 def _compute_yaw_rate(yaw: np.ndarray, dt: float) -> np.ndarray:
-    yaw_diff = np.diff(yaw, prepend=yaw[0])
-    yaw_diff = np.arctan2(np.sin(yaw_diff), np.cos(yaw_diff))
-    return yaw_diff / dt
+    return _compute_angle_rate(yaw[:, None], dt)[:, 0]
 
 
 def _prepare_src_input(
@@ -144,9 +158,14 @@ def _prepare_src_input(
     yaw = _extract_yaw(heading_rot)
     lin_vel_world = _compute_world_linear_vel(base_trans, dt)
     lin_vel_local = _world_vel_to_local(lin_vel_world, yaw)
-    yaw_rate = _compute_yaw_rate(yaw, dt)
+    if int(src_stats.root_ang_dim) == 3:
+        from scipy.spatial.transform import Rotation as R
+        rpy = R.from_quat(np.asarray(heading_rot, dtype=np.float32)).as_euler("xyz", degrees=False).astype(np.float32)
+        root_ang_rate = _compute_angle_rate(rpy, dt)
+    else:
+        root_ang_rate = _compute_yaw_rate(yaw, dt)[:, None]
 
-    motion_np = np.concatenate([joint_pos, lin_vel_local, yaw_rate[:, None]], axis=-1)
+    motion_np = np.concatenate([joint_pos, lin_vel_local, root_ang_rate], axis=-1)
     motion_t = torch.from_numpy(motion_np).float()
     motion_t = (motion_t - src_stats.mean) / (src_stats.std + 1e-8)
     return motion_t.to(device), float(yaw[0]), float(fps)
@@ -159,7 +178,7 @@ def _motion_to_pkl(motion_denorm: np.ndarray, dst_stats: InferenceStats, yaw_ini
 
     joint_pos = motion_denorm[:, :nj]
     lin_vel_local = motion_denorm[:, nj:nj + 3]
-    yaw_rate = motion_denorm[:, nj + 3]
+    yaw_rate = motion_denorm[:, nj + 3 + dst_stats.root_ang_dim - 1]
 
     yaw = yaw_init + np.cumsum(yaw_rate * dt)
     cos_yaw = np.cos(yaw)
@@ -247,7 +266,7 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default="student",
         choices=["student", "source", "blend"],
-        help="How to set output root-motion features [lin_vel_local(3), yaw_rate(1)] during rollout.",
+        help="How to set output root-motion features [lin_vel_local(3), angular rates] during rollout.",
     )
     p.add_argument(
         "--root-blend-alpha",
@@ -293,10 +312,10 @@ def _infer_one(
     src_root_start = int(src_stats.njoints)
     dst_root_start = int(dst_stats.njoints)
 
-    src_mean_root = src_stats.mean[src_root_start:src_root_start + 4].detach().cpu().numpy().astype(np.float32)
-    src_std_root = src_stats.std[src_root_start:src_root_start + 4].detach().cpu().numpy().astype(np.float32)
-    dst_mean_root = dst_stats.mean[dst_root_start:dst_root_start + 4].detach().cpu().numpy().astype(np.float32)
-    dst_std_root = dst_stats.std[dst_root_start:dst_root_start + 4].detach().cpu().numpy().astype(np.float32)
+    src_mean_root = src_stats.mean[src_root_start:].detach().cpu().numpy().astype(np.float32)
+    src_std_root = src_stats.std[src_root_start:].detach().cpu().numpy().astype(np.float32)
+    dst_mean_root = dst_stats.mean[dst_root_start:].detach().cpu().numpy().astype(np.float32)
+    dst_std_root = dst_stats.std[dst_root_start:].detach().cpu().numpy().astype(np.float32)
     blend_alpha = float(np.clip(args.root_blend_alpha, 0.0, 1.0))
 
     src_hist: deque[np.ndarray] = deque(maxlen=hist_len)
@@ -327,13 +346,13 @@ def _infer_one(
             y_np = y_hat[0].detach().cpu().numpy().astype(np.float32)
 
             if args.root_motion_mode != "student":
-                src_root_phys = src_t[src_root_start:src_root_start + 4] * src_std_root + src_mean_root
-                pred_root_phys = y_np[dst_root_start:dst_root_start + 4] * dst_std_root + dst_mean_root
+                src_root_phys = src_t[src_root_start:] * src_std_root + src_mean_root
+                pred_root_phys = y_np[dst_root_start:] * dst_std_root + dst_mean_root
                 if args.root_motion_mode == "source":
                     out_root_phys = src_root_phys
                 else:
                     out_root_phys = (1.0 - blend_alpha) * pred_root_phys + blend_alpha * src_root_phys
-                y_np[dst_root_start:dst_root_start + 4] = (out_root_phys - dst_mean_root) / (dst_std_root + 1e-8)
+                y_np[dst_root_start:] = (out_root_phys - dst_mean_root) / (dst_std_root + 1e-8)
 
             preds.append(y_np)
             prev_out.append(y_np)

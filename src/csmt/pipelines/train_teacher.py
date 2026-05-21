@@ -6,6 +6,7 @@ from pathlib import Path
 import shlex
 
 import yaml
+import numpy as np
 
 from csmt.pipelines._legacy_pan_train import build_legacy_default_args, run_pan_training
 from csmt.robots.registry import load_robot_spec
@@ -199,6 +200,20 @@ def main() -> None:
     args_dict["dst_train_path"] = dst_train
     args_dict["dst_test_path"] = dst_test
 
+    def _read_root_ang_dim(stats_path: str, feature_njoints: int) -> tuple[int, str]:
+        payload = np.load(stats_path, allow_pickle=True)
+        if "root_ang_dim" in payload.files:
+            dim = int(np.asarray(payload["root_ang_dim"]).item())
+        elif "mean" in payload.files:
+            dim = int(payload["mean"].shape[0] - int(feature_njoints) - 3)
+        else:
+            dim = 1
+        if "root_ang_features" in payload.files:
+            mode = str(np.asarray(payload["root_ang_features"]).item())
+        else:
+            mode = "rpy" if dim == 3 else "yaw"
+        return dim, mode
+
     missing = []
     for key in ("srcstats_path", "src_train_path", "src_test_path",
                 "dststats_path", "dst_train_path", "dst_test_path"):
@@ -211,6 +226,16 @@ def main() -> None:
             "Missing required processed dataset files for training. "
             f"Missing keys: {missing}. Searched roots: {root_msg}"
         )
+
+    src_root_ang_dim, src_root_ang_features = _read_root_ang_dim(args_dict["srcstats_path"], src_robot.njoints)
+    dst_root_ang_dim, dst_root_ang_features = _read_root_ang_dim(args_dict["dststats_path"], dst_robot.njoints)
+    if src_root_ang_dim != dst_root_ang_dim:
+        raise ValueError(
+            f"Source/destination root angular feature dims differ: src={src_root_ang_dim}, dst={dst_root_ang_dim}. "
+            "Regenerate both datasets with the same --root-ang-features mode."
+        )
+    args_dict["root_ang_dim"] = int(src_root_ang_dim)
+    args_dict["root_ang_features"] = src_root_ang_features if src_root_ang_features == dst_root_ang_features else f"{src_root_ang_features}/{dst_root_ang_features}"
 
     # Backward aliases retained.
     args_dict["hum_njoints"] = int(src_robot.njoints)
@@ -283,6 +308,7 @@ def main() -> None:
     print(f"  epoch_num: {args_dict.get('epoch_num')}")
     print(f"  device: {args_dict.get('device')}")
     print(f"  dataset_roots: {[str(x) for x in dataset_roots]}")
+    print(f"  root_ang_features: {args_dict.get('root_ang_features')} dim={args_dict.get('root_ang_dim')}")
 
     if cli.dry_run:
         print("\nDry-run mode enabled; not starting training.")

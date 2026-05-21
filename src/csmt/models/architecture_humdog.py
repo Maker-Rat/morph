@@ -519,6 +519,7 @@ class PAN_model(BaseModel):
         self.cycle_loss = 0
         self.loss_G = 0
         self.retar_loss = 0
+        self.retar_ang_loss = torch.tensor(0.0, device=self.device)
         self.ee_loss = torch.tensor(0.0, device=self.device)
         self.kl_loss = 0
         self.loss_G_total = 0
@@ -540,13 +541,14 @@ class PAN_model(BaseModel):
 
             njoints = self.datasets[i].njoints
 
-            # rec_loss_yaw: explicit yaw_rate reconstruction loss
+            # rec_loss_ang: explicit root angular-rate reconstruction loss.
+            # Legacy datasets have [yaw_rate]; rpy datasets have [roll_rate, pitch_rate, yaw_rate].
             motion_denorm = self.motion_denorm[i]
             rec_denorm    = self.rec_denorm[i]
-            yaw_input = motion_denorm[:, :, njoints+3:njoints+4]  # [B, T, 1]
-            yaw_rec   = rec_denorm[:,   :, njoints+3:njoints+4]   # [B, T, 1]
-            rec_loss_yaw = self.mse(yaw_input, yaw_rec)
-            self.loss_recoder.add_scalar('rec_loss_yaw_{}'.format(i), rec_loss_yaw)
+            ang_input = motion_denorm[:, :, njoints+3:]
+            ang_rec   = rec_denorm[:,   :, njoints+3:]
+            rec_loss_yaw = self.mse(ang_input, ang_rec)
+            self.loss_recoder.add_scalar('rec_loss_ang_{}'.format(i), rec_loss_yaw)
 
             # rec_loss2: local velocity reconstruction in normalized feature space
             # self.motion[i]: [B, C, T], self.rec[i]: [B, T, C]
@@ -610,11 +612,11 @@ class PAN_model(BaseModel):
                     cycle_motion_loss2 = self.criterion_root(src_vel, cyc_vel)
                     self.loss_recoder.add_scalar('cycle_motion_loss2_{}_{}'.format(src, dst), cycle_motion_loss2)
 
-                    # cycle_motion_loss3: yaw_rate
-                    cyc_yaw = cyc_denorm_curr[:, :, njoints_src+3:njoints_src+4]
-                    src_yaw = motion_denorm_src[:, :, njoints_src+3:njoints_src+4]
+                    # cycle_motion_loss3: root angular rates
+                    cyc_yaw = cyc_denorm_curr[:, :, njoints_src+3:]
+                    src_yaw = motion_denorm_src[:, :, njoints_src+3:]
                     cycle_yaw_loss = self.mse(src_yaw, cyc_yaw)
-                    self.loss_recoder.add_scalar('cycle_yaw_loss_{}_{}'.format(src, dst), cycle_yaw_loss)
+                    self.loss_recoder.add_scalar('cycle_ang_loss_{}_{}'.format(src, dst), cycle_yaw_loss)
 
                     # Combined: uncomment and tune weights as needed
                     cycle_motion_loss = cycle_motion_loss1 # + cycle_motion_loss2 + cycle_yaw_loss
@@ -627,14 +629,34 @@ class PAN_model(BaseModel):
                             lambda_cycle_motion = 0.0
                     self.cycle_loss += cycle_motion_loss * lambda_cycle_motion
 
-                    # --- Retargeted yaw_rate transfer loss ---
+                    # --- Retargeted root angular-rate transfer losses. ---
+                    # These are intentionally outside lambda_retar_vel. Yaw is always
+                    # the last angular channel; rpy mode also exposes roll/pitch.
                     motion_denorm_src     = self.motion_denorm[src]
                     fake_retar_denorm_dst = self.fake_retar_denorm[p]
-                    yaw_rate_src   = motion_denorm_src[:, :, src_joints+3:src_joints+4]    # [B, T, 1]
-                    yaw_rate_retar = fake_retar_denorm_dst[:, :, dst_joints+3:dst_joints+4] # [B, T, 1]
+                    src_ang = motion_denorm_src[:, :, src_joints+3:]
+                    dst_ang = fake_retar_denorm_dst[:, :, dst_joints+3:]
+
+                    def _loss_weight(name, default=0.0):
+                        return float(getattr(self.args, name, default))
+
+                    roll_loss = torch.tensor(0.0, device=self.device)
+                    pitch_loss = torch.tensor(0.0, device=self.device)
+                    if src_ang.shape[-1] >= 3 and dst_ang.shape[-1] >= 3:
+                        roll_loss = self.mse(src_ang[..., 0:1], dst_ang[..., 0:1])
+                        pitch_loss = self.mse(src_ang[..., 1:2], dst_ang[..., 1:2])
+                        self.retar_ang_loss = self.retar_ang_loss + roll_loss * _loss_weight('lambda_retar_roll_rate', 0.0)
+                        self.retar_ang_loss = self.retar_ang_loss + pitch_loss * _loss_weight('lambda_retar_pitch_rate', 0.0)
+                    yaw_rate_src = src_ang[..., -1:]
+                    yaw_rate_retar = dst_ang[..., -1:]
                     retar_yaw_loss = self.mse(yaw_rate_src, yaw_rate_retar)
-                    self.loss_recoder.add_scalar('retar_yaw_loss_{}_{}'.format(src, dst), retar_yaw_loss)
-                    self.retar_loss += retar_yaw_loss * 1e-1
+                    yaw_weight = _loss_weight('lambda_retar_yaw_rate', -1.0)
+                    if yaw_weight < 0.0:
+                        yaw_weight = float(getattr(self.args, 'lambda_retar_vel', 0.0)) * 1e-1
+                    self.retar_ang_loss = self.retar_ang_loss + retar_yaw_loss * yaw_weight
+                    self.loss_recoder.add_scalar('retar_roll_rate_loss_{}_{}'.format(src, dst), roll_loss)
+                    self.loss_recoder.add_scalar('retar_pitch_rate_loss_{}_{}'.format(src, dst), pitch_loss)
+                    self.loss_recoder.add_scalar('retar_yaw_rate_loss_{}_{}'.format(src, dst), retar_yaw_loss)
                     
                     dst_joint_angles = fake_retar_denorm_dst[:, :, :dst_joints]  # [B, T, num_joints]
 
@@ -702,8 +724,10 @@ class PAN_model(BaseModel):
                     if self.args.retar_vel_matching == 'mapping':
                         retar_root_v_loss = self.criterion_root_v(input_vel, retar_vel)
                     elif self.args.retar_vel_matching == 'direct':
-                        retar_root_v_loss = self.criterion_root_v(self.motion_denorm[src][..., -4:-1],
-                                                                  self.fake_retar_denorm[p][..., -4:-1])
+                        retar_root_v_loss = self.criterion_root_v(
+                            self.motion_denorm[src][..., src_joints:src_joints + 3],
+                            self.fake_retar_denorm[p][..., dst_joints:dst_joints + 3],
+                        )
                     elif self.args.retar_vel_matching == 'direction':
                         retar_root_v_loss = self.criterion_root_v(src_vector / src_speed,
                                                                   retar_vector / dst_speed)
@@ -902,11 +926,13 @@ class PAN_model(BaseModel):
                             self.cycle_loss * self.args.lambda_cycle     + \
                             self.loss_G     * 1                          + \
                             self.retar_loss * self.args.lambda_retar_vel + \
+                            self.retar_ang_loss + \
                             self.ee_loss    * getattr(self.args, 'lambda_ee', 0.0) + \
                             self.kl_loss    * getattr(self.args, 'lambda_kl', 1e-3) + \
                             self.physics_loss
         
         self.loss_recoder.add_scalar('kl_loss_total', self.kl_loss)
+        self.loss_recoder.add_scalar('retargeting_ang_loss_total', self.retar_ang_loss)
         self.loss_recoder.add_scalar('ee_loss_total', self.ee_loss)
         self.loss_recoder.add_scalar('G_loss_total',  self.loss_G_total)
         self.loss_G_total.backward()
@@ -958,6 +984,7 @@ class PAN_model(BaseModel):
             'loss/generator': self.loss_G.item(),
             'loss/generator_total': self.loss_G_total.item(),
             'loss/retargeting_velocity': self.retar_loss.item(),
+            'loss/retargeting_angular': self.retar_ang_loss.item(),
             'loss/end_effector': self.ee_loss.item(),
         }
         

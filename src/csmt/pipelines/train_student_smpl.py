@@ -45,6 +45,15 @@ class MotionStats:
             nbodies = int(payload["n_bodies"]) if "n_bodies" in payload else int(len(self.parents))
         self.njoints = int(njoints)
         self.nbodies = int(nbodies)
+        if "root_ang_dim" in payload.files:
+            self.root_ang_dim = int(np.asarray(payload["root_ang_dim"]).item())
+        else:
+            self.root_ang_dim = int(self.mean.shape[0] - self.njoints - 3)
+            if self.root_ang_dim <= 0:
+                self.root_ang_dim = 1
+        self.root_dim = int(3 + self.root_ang_dim)
+        self.motion_dim = int(self.njoints + self.root_dim)
+        self.root_ang_features = str(np.asarray(payload["root_ang_features"]).item()) if "root_ang_features" in payload.files else ("rpy" if self.root_ang_dim == 3 else "yaw")
 
 
 class SmplWindowDataset(Dataset):
@@ -236,8 +245,13 @@ def _pkl_to_normalized_features(path: Path, stats: MotionStats, max_frames: int)
     dt = 1.0 / max(float(fps), 1e-8)
     yaw = _extract_yaw(heading_rot)
     lin_vel_local = _world_vel_to_local(_compute_world_linear_vel(root_pos, dt), yaw)
-    yaw_rate = _compute_yaw_rate(yaw, dt)
-    motion = np.concatenate([joint_pos, lin_vel_local, yaw_rate[:, None]], axis=-1).astype(np.float32)
+    if int(stats.root_ang_dim) == 3:
+        from scipy.spatial.transform import Rotation as R
+        rpy = R.from_quat(np.asarray(heading_rot, dtype=np.float32)).as_euler("xyz", degrees=False).astype(np.float32)
+        root_ang_rate = _compute_angle_rate(rpy, dt)
+    else:
+        root_ang_rate = _compute_yaw_rate(yaw, dt)[:, None]
+    motion = np.concatenate([joint_pos, lin_vel_local, root_ang_rate], axis=-1).astype(np.float32)
     mean = stats.mean.detach().cpu().numpy().astype(np.float32)
     std = np.maximum(stats.std.detach().cpu().numpy().astype(np.float32), 1e-8)
     return ((motion - mean) / std).astype(np.float32, copy=False), float(fps)
@@ -442,8 +456,8 @@ def _compute_losses(model, x_hist, y_prev, y_tgt, src_root_phys, params, dst_njo
     y_hat, _ = model(x_hist_norm, y_prev_in)
     loss_im = nn.functional.mse_loss(y_hat[:, :dst_njoints], y_tgt[:, :dst_njoints])
     src_root = (src_root_phys - dst_root_mean_t.view(1, -1)) / (dst_root_std_t.view(1, -1) + 1e-8)
-    teacher_root = y_tgt[:, dst_njoints:dst_njoints + 4]
-    dst_root = y_hat[:, dst_njoints:dst_njoints + 4]
+    teacher_root = y_tgt[:, dst_njoints:]
+    dst_root = y_hat[:, dst_njoints:]
     root_target = _root_motion_target(src_root, teacher_root, params["root_motion_target_mode"], params["root_motion_blend_alpha"])
     loss_root = nn.functional.mse_loss(dst_root, root_target)
     loss_jl = _joint_limit_loss_normalized(y_hat[:, :dst_njoints], dst_lo, dst_hi, float(params["joint_limit_threshold"]))
@@ -642,7 +656,7 @@ def main() -> None:
     x0, y0, yt0, _ = train_ds[0]
     src_dim = int(x0.shape[-1])
     dst_dim = int(yt0.shape[-1])
-    dst_njoints = dst_dim - 4
+    dst_njoints = int(dst_robot.njoints)
     if src_dim != SMPL_INPUT_DIM:
         raise ValueError(f"expected smpl_input_dim={SMPL_INPUT_DIM}, got {src_dim}")
     device = torch.device("cuda:0" if torch.cuda.is_available() and "cuda" in str(params["device"]).lower() else "cpu")

@@ -81,18 +81,39 @@ def world_vel_to_local(lin_vel_world: np.ndarray, yaw: np.ndarray) -> np.ndarray
     return lin_vel_local
 
 
-def compute_yaw_rate(yaw: np.ndarray, dt: float) -> np.ndarray:
-    yaw_diff = np.diff(yaw, prepend=yaw[0])
-    yaw_diff = np.arctan2(np.sin(yaw_diff), np.cos(yaw_diff))
-    return (yaw_diff / dt)[:, np.newaxis]
+def compute_angle_rate(angles: np.ndarray, dt: float) -> np.ndarray:
+    angles = np.asarray(angles, dtype=np.float32)
+    diff = np.diff(angles, axis=0, prepend=angles[:1])
+    diff = np.arctan2(np.sin(diff), np.cos(diff))
+    return (diff / dt).astype(np.float32)
 
 
-def compute_root_features(base_trans: np.ndarray, base_rot: np.ndarray, dt: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+def compute_rpy_xyz(base_rot_xyzw: np.ndarray) -> np.ndarray:
+    # Local import keeps scipy optional for tooling that only inspects the module.
+    from scipy.spatial.transform import Rotation as R
+
+    quat = np.asarray(base_rot_xyzw, dtype=np.float32)
+    return R.from_quat(quat).as_euler("xyz", degrees=False).astype(np.float32)
+
+
+def compute_root_features(
+    base_trans: np.ndarray,
+    base_rot: np.ndarray,
+    dt: float,
+    root_ang_features: str = "yaw",
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     lin_vel_world = compute_world_linear_vel(base_trans, dt)
     yaw = extract_yaw(base_rot)
     lin_vel_local = world_vel_to_local(lin_vel_world, yaw)
-    yaw_rate = compute_yaw_rate(yaw, dt)
-    return lin_vel_local, yaw_rate, yaw
+
+    mode = str(root_ang_features).lower()
+    if mode == "rpy":
+        root_ang_rate = compute_angle_rate(compute_rpy_xyz(base_rot), dt)
+    elif mode == "yaw":
+        root_ang_rate = compute_angle_rate(yaw[:, None], dt)
+    else:
+        raise ValueError(f"Unsupported root_ang_features: {root_ang_features}")
+    return lin_vel_local, root_ang_rate, yaw
 
 
 # ----------------------------------------------------------------------------
@@ -312,7 +333,7 @@ def create_sliding_windows(
     base_rot: np.ndarray,
     joint_pos: np.ndarray,
     lin_vel_local: np.ndarray,
-    yaw_rate: np.ndarray,
+    root_ang_rate: np.ndarray,
     yaw: np.ndarray,
     window_size: int,
     stride: int,
@@ -328,7 +349,7 @@ def create_sliding_windows(
         base_rot = np.pad(base_rot, ((0, pad), (0, 0)), mode="edge")
         joint_pos = np.pad(joint_pos, ((0, pad), (0, 0)), mode="edge")
         lin_vel_local = np.pad(lin_vel_local, ((0, pad), (0, 0)), mode="edge")
-        yaw_rate = np.pad(yaw_rate, ((0, pad), (0, 0)), mode="edge")
+        root_ang_rate = np.pad(root_ang_rate, ((0, pad), (0, 0)), mode="edge")
         yaw = np.pad(yaw, (0, pad), mode="edge")
         n_frames = int(window_size)
 
@@ -339,6 +360,7 @@ def create_sliding_windows(
     out = {
         "joint_pos": [],
         "lin_vel_local": [],
+        "root_ang_rate": [],
         "yaw_rate": [],
         "base_trans": [],
         "base_rot": [],
@@ -349,7 +371,9 @@ def create_sliding_windows(
         end = start + window_size
         out["joint_pos"].append(joint_pos[start:end])
         out["lin_vel_local"].append(lin_vel_local[start:end])
-        out["yaw_rate"].append(yaw_rate[start:end])
+        ang_window = root_ang_rate[start:end]
+        out["root_ang_rate"].append(ang_window)
+        out["yaw_rate"].append(ang_window[:, -1:])
         out["base_trans"].append(base_trans[start:end])
         out["base_rot"].append(base_rot[start:end])
         out["yaw"].append(yaw[start:end])
@@ -374,6 +398,7 @@ def process_pkl_directory(
     max_windows: Optional[int],
     augment_mirror: bool,
     mirror_specs: Dict[str, Dict[str, List]],
+    root_ang_features: str = "yaw",
 ) -> Dict:
     pkl_files = sorted(pkl_dir.glob("*.pkl"))
     if not pkl_files:
@@ -382,6 +407,7 @@ def process_pkl_directory(
     all_data = {
         "joint_pos": [],
         "lin_vel_local": [],
+        "root_ang_rate": [],
         "yaw_rate": [],
         "base_trans": [],
         "base_rot": [],
@@ -419,13 +445,15 @@ def process_pkl_directory(
                     joint_pos = np.asarray([f[2] for f in work_segment], dtype=np.float32)
                     heading_rot = np.asarray([f[3] if len(f) >= 4 else f[1] for f in work_segment], dtype=np.float32)
 
-                    lin_vel_local, yaw_rate, yaw = compute_root_features(base_trans, heading_rot, dt)
+                    lin_vel_local, root_ang_rate, yaw = compute_root_features(
+                        base_trans, heading_rot, dt, root_ang_features=root_ang_features
+                    )
                     windowed = create_sliding_windows(
                         base_trans=base_trans,
                         base_rot=base_rot,
                         joint_pos=joint_pos,
                         lin_vel_local=lin_vel_local,
-                        yaw_rate=yaw_rate,
+                        root_ang_rate=root_ang_rate,
                         yaw=yaw,
                         window_size=window_size,
                         stride=stride,
@@ -468,6 +496,7 @@ def _merge_tagged_sources(
     max_windows: Optional[int],
     augment_mirror: bool,
     mirror_specs: Dict[str, Dict[str, List]],
+    root_ang_features: str = "yaw",
 ) -> Dict:
     merged_chunks: List[Dict] = []
     total_windows = 0
@@ -493,6 +522,7 @@ def _merge_tagged_sources(
             max_windows=remaining,
             augment_mirror=augment_mirror,
             mirror_specs=mirror_specs,
+            root_ang_features=root_ang_features,
         )
         n = int(len(data["joint_pos"]))
         data["ee_tag"] = np.full((n, 1), float(ee_tag_value), dtype=np.float32)
@@ -527,7 +557,7 @@ def compute_statistics(train_data: Dict) -> Dict:
                 [
                     train_data["joint_pos"][i, t],
                     train_data["lin_vel_local"][i, t],
-                    train_data["yaw_rate"][i, t],
+                    train_data.get("root_ang_rate", train_data["yaw_rate"])[i, t],
                 ]
             )
             all_features.append(frame)
@@ -565,6 +595,7 @@ def _create_robot_dataset(
     max_windows: Optional[int],
     augment_mirror: bool,
     mirror_specs: Dict[str, Dict[str, List]],
+    root_ang_features: str = "yaw",
 ) -> Dict:
     source_xml, _ = _resolve_robot_paths(output_root, robot_id)
 
@@ -581,11 +612,14 @@ def _create_robot_dataset(
         max_windows=max_windows,
         augment_mirror=augment_mirror,
         mirror_specs=mirror_specs,
+        root_ang_features=root_ang_features,
     )
 
     train_data, test_data = train_test_split(all_data, train_ratio, seed)
     stats = compute_statistics(train_data)
     skeleton = parse_mujoco_skeleton(str(source_xml))
+    root_ang_dim = 3 if str(root_ang_features).lower() == "rpy" else 1
+    feature_n_joints = int(train_data["joint_pos"].shape[-1])
     stats.update(
         {
             "parents": skeleton["parents"],
@@ -593,8 +627,14 @@ def _create_robot_dataset(
             "body_names": np.asarray(skeleton["body_names"], dtype=object),
             "joint_names": np.asarray(skeleton["joint_names"], dtype=object),
             "joint_ranges": skeleton["joint_ranges"],
+            # XML skeleton metadata is retained for inspection, while feature_n_joints
+            # records the actual model input joint count after free-root removal.
             "n_joints": skeleton["n_joints"],
+            "feature_n_joints": np.asarray(feature_n_joints, dtype=np.int64),
             "n_bodies": skeleton["n_bodies"],
+            "root_ang_features": np.asarray(str(root_ang_features)),
+            "root_ang_dim": np.asarray(root_ang_dim, dtype=np.int64),
+            "motion_dim": np.asarray(int(feature_n_joints + 3 + root_ang_dim), dtype=np.int64),
         }
     )
 
@@ -654,6 +694,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--train-ratio", type=float, default=0.8)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--dt-default", type=float, default=1.0 / 30.0)
+    p.add_argument("--root-ang-features", choices=["yaw", "rpy"], default="yaw",
+                   help="Root angular motion features: yaw keeps legacy [yaw_rate], rpy stores [roll_rate,pitch_rate,yaw_rate].")
 
     p.add_argument("--handle-jumps", action="store_true", default=True)
     p.add_argument("--no-handle-jumps", dest="handle_jumps", action="store_false")
@@ -825,6 +867,7 @@ def main() -> None:
     print(f"  processed_dir: {processed_dir}")
     print(f"  window={args.window_size} stride={args.stride} train_ratio={args.train_ratio}")
     print(f"  mirror augmentation: {args.augment_mirror}")
+    print(f"  root angular features: {args.root_ang_features}")
 
     if mode_cfg["mode"] == "single":
         print(f"  robot: {mode_cfg['robot_id']}")
@@ -869,6 +912,7 @@ def main() -> None:
             max_windows=max_windows,
             augment_mirror=bool(args.augment_mirror),
             mirror_specs=mirror_specs,
+            root_ang_features=str(args.root_ang_features),
         )
 
         summary = {"robot": robot_summary}
@@ -901,6 +945,7 @@ def main() -> None:
         max_windows=max_windows_src,
         augment_mirror=bool(args.augment_mirror),
         mirror_specs=mirror_specs,
+        root_ang_features=str(args.root_ang_features),
     )
 
     dst_summary = _create_robot_dataset(
@@ -920,6 +965,7 @@ def main() -> None:
         max_windows=max_windows_dst,
         augment_mirror=bool(args.augment_mirror),
         mirror_specs=mirror_specs,
+        root_ang_features=str(args.root_ang_features),
     )
 
     summary = {

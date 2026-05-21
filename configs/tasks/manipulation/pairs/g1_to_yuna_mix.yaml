@@ -41,6 +41,9 @@ loss_overrides:
   retar_vel_map_z: false
   ee_weight_manip: 1.0
   ee_weight_locomotion: 0.05
+  lambda_retar_roll_rate: 1.0
+  lambda_retar_pitch_rate: 1.0
+  lambda_retar_yaw_rate: 15.0
 indices:
   src_feet: [7, 15]
   dst_feet: [12, 16, 20, 24]

@@ -83,8 +83,8 @@ class IntegratedModel:
                     LatentDiscriminator(args.dis_layers, args.dis_kernel_size,
                                         input_dim, hidden_dim).to(device)
             elif self.args.dis_mode == 'denorm_rotation':
-                # denorm_rotation: [njoints + 3 (lin_vel_local) + 1 (yaw_rate)]
-                input_dim = njoints + 4
+                # denorm_rotation: [njoints + 3 (lin_vel_local) + root angular rates]
+                input_dim = njoints + 3 + int(getattr(self.args, "root_ang_dim", 1))
                 print("Discriminator input dim (denorm_rotation):", input_dim, topology)
                 hidden_dim = self.args.dis_hidden
                 self.discriminator = \

@@ -223,7 +223,7 @@ class ForwardKinematics(nn.Module):
         """
         Compute forward kinematics for batched motion data.
 
-        Feature vector: [joint_angles (n_joints) | lin_vel_local (3) | yaw_rate (1)]
+        Feature vector: [joint_angles | lin_vel_local (3) | angular rates (yaw or rpy; yaw is last)]
 
         Global positions are computed by:
           1. Running FK in the robot local frame (joint angles only)
@@ -231,7 +231,7 @@ class ForwardKinematics(nn.Module):
           3. Translating by the integrated world position
 
         Args:
-            motion_data: [B, T, n_joints+4]
+            motion_data: [B, T, n_joints+3+root_ang_dim]
             dt:          timestep in seconds (default 1/30)
 
         Returns:
@@ -244,7 +244,7 @@ class ForwardKinematics(nn.Module):
 
         joint_angles  = motion_data[..., :self.n_joints]         # [B, T, n_joints]
         lin_vel_local = motion_data[..., self.n_joints:self.n_joints+3]  # [B, T, 3]
-        yaw_rate      = motion_data[..., self.n_joints+3]         # [B, T]
+        yaw_rate      = motion_data[..., -1]                      # [B, T], yaw is always last angular channel
 
         # ── 1. FK in local frame ───────────────────────────────────────────
         joint_angles_flat = joint_angles.reshape(-1, self.n_joints)
@@ -309,7 +309,7 @@ class ForwardKinematics(nn.Module):
         This is useful when the monitored EE is not at the link origin (e.g., calf -> paw tip).
 
         Args:
-            motion_data:   [B, T, n_joints+4]
+            motion_data:   [B, T, n_joints+3+root_ang_dim]
             link_indices:  list of link indices in self.link_names
             local_offsets: list of [x, y, z] local offsets per selected link
             dt:            timestep in seconds
@@ -329,7 +329,7 @@ class ForwardKinematics(nn.Module):
 
         batch_size, time_steps, _ = motion_data.shape
         joint_angles = motion_data[..., :self.n_joints]      # [B, T, n_joints]
-        yaw_rate = motion_data[..., self.n_joints+3]         # [B, T]
+        yaw_rate = motion_data[..., -1]                      # [B, T], yaw is always last angular channel
         yaw = torch.cumsum(yaw_rate * dt, dim=1)             # [B, T]
 
         half = yaw * 0.5

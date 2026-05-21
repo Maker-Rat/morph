@@ -2,7 +2,7 @@
 Dataset loader for motion retargeting.
 
 Feature vector returned by __getitem__:
-    [joint_angles (njoints) | lin_vel_local (3) | yaw_rate (1)]  -> njoints + 4
+    [joint_angles (njoints) | lin_vel_local (3) | root_ang_rate (1 or 3)]
 
 The global quaternion (base_rot) and translation (base_trans) are loaded as
 auxiliary tensors for inference-time trajectory reconstruction but are NOT
@@ -47,10 +47,19 @@ class MotionDataset(Dataset):
         self.parents = _stats["parents"]
         self.offsets = _stats["offsets"]
 
-        # Model input features [N, T, njoints+4]
+        # Model input features [N, T, njoints + 3 + root_ang_dim].
+        # Legacy datasets only have yaw_rate; newer rpy datasets also store root_ang_rate.
         self.joint_pos = torch.from_numpy(_data["joint_pos"]).float()
         self.lin_vel_local = torch.from_numpy(_data["lin_vel_local"]).float()
-        self.yaw_rate = torch.from_numpy(_data["yaw_rate"]).float()
+        if "root_ang_rate" in _data.files:
+            self.root_ang_rate = torch.from_numpy(_data["root_ang_rate"]).float()
+            self.yaw_rate = self.root_ang_rate[..., -1:]
+        else:
+            self.yaw_rate = torch.from_numpy(_data["yaw_rate"]).float()
+            self.root_ang_rate = self.yaw_rate
+        self.root_ang_dim = int(self.root_ang_rate.shape[-1])
+        self.root_dim = int(3 + self.root_ang_dim)
+        self.root_ang_features = str(_stats["root_ang_features"].item()) if "root_ang_features" in _stats.files else ("rpy" if self.root_ang_dim == 3 else "yaw")
 
         # Auxiliary data (not model inputs)
         self.base_trans = torch.from_numpy(_data["base_trans"]).float()
@@ -69,7 +78,7 @@ class MotionDataset(Dataset):
         self.std = torch.from_numpy(_stats["std"]).float()
 
         # Precompute normalized motion features once to avoid per-sample cat/norm overhead.
-        self.motion_data = torch.cat([self.joint_pos, self.lin_vel_local, self.yaw_rate], dim=-1)
+        self.motion_data = torch.cat([self.joint_pos, self.lin_vel_local, self.root_ang_rate], dim=-1)
         self.motion_data_norm = (self.motion_data - self.mean) / (self.std + 1e-8)
         self.offsets_flat = torch.from_numpy(self.offsets).float().reshape(-1)
 

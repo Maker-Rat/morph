@@ -139,11 +139,11 @@ def run_pan_training(parameters: dict, para_cmd: str | None = None) -> None:
             h_offsets = h_offsets.reshape(h_offsets.shape[0], -1)
             d_offsets = d_offsets.reshape(d_offsets.shape[0], -1)
 
-            vel_dim = 4
+            root_dim = int(3 + int(getattr(args, "root_ang_dim", 1)))
             src_njoints = getattr(args, "src_njoints", getattr(args, "hum_njoints"))
             dst_njoints = getattr(args, "dst_njoints", getattr(args, "dog_njoints"))
-            input_h_encoder = (input_h[..., : src_njoints + vel_dim]).transpose(1, 2)
-            input_d_encoder = (input_d[..., : dst_njoints + vel_dim]).transpose(1, 2)
+            input_h_encoder = (input_h[..., : src_njoints + root_dim]).transpose(1, 2)
+            input_d_encoder = (input_d[..., : dst_njoints + root_dim]).transpose(1, 2)
 
             input_h_encoder = (input_h_encoder, h_offsets, h_offsets_withend, h_ee_gate)
             input_d_encoder = (input_d_encoder, d_offsets, d_offsets_withend, d_ee_gate)

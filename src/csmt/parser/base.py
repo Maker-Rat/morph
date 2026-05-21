@@ -69,6 +69,16 @@ def add_losses_options(parser):
                        help="Source XY-speed percentile used as vmax for retar_vel_matching=mapping.")
     group.add_argument("--retar_vel_dst_vmax_percentile", type=float, default=95.0,
                        help="Destination XY-speed percentile used as vmax for retar_vel_matching=mapping.")
+    group.add_argument("--root_ang_features", type=str, default="yaw", choices=["yaw", "rpy"],
+                       help="Motion root angular feature layout: yaw=[yaw_rate], rpy=[roll_rate,pitch_rate,yaw_rate].")
+    group.add_argument("--root_ang_dim", type=int, default=1,
+                       help="Number of root angular-rate channels. Usually inferred from processed stats.")
+    group.add_argument("--lambda_retar_roll_rate", type=float, default=0.0,
+                       help="Separate retarget roll-rate matching weight, outside lambda_retar_vel.")
+    group.add_argument("--lambda_retar_pitch_rate", type=float, default=0.0,
+                       help="Separate retarget pitch-rate matching weight, outside lambda_retar_vel.")
+    group.add_argument("--lambda_retar_yaw_rate", type=float, default=-1.0,
+                       help="Separate retarget yaw-rate matching weight. <0 preserves legacy 0.1*lambda_retar_vel behavior.")
 
     group.add_argument('--use_vae', action='store_true', default=False,
                        help='Enable VAE (adds mu/log_var heads and KL loss)')

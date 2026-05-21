@@ -1,0 +1,11 @@
+{
+  "robot": {
+    "robot_id": "b2_z1",
+    "stats_path": "/home/marmot/Ritwik/morph/data/processed/mix_g1_b2_z1_rpy/b2_z1_stats.npz",
+    "train_path": "/home/marmot/Ritwik/morph/data/processed/mix_g1_b2_z1_rpy/b2_z1_train.npz",
+    "test_path": "/home/marmot/Ritwik/morph/data/processed/mix_g1_b2_z1_rpy/b2_z1_test.npz",
+    "total_windows": 1753,
+    "train_windows": 1402,
+    "test_windows": 351
+  }
+}

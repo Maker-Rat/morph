@@ -5,6 +5,7 @@ lr: 5e-4
 weight_decay: 1.0e-4
 
 # Model context lengths for paired SMPL -> cleaned target PKL windows.
+model_type: flow_matching
 hist_len: 24
 prev_len: 2
 conv_channels: 64
@@ -27,6 +28,8 @@ y_prev_noise_std: 0.025
 y_prev_noise_prob: 0.8
 
 smpl_input_dim: 69
+flow_steps: 16
+flow_noise_scale: 1.0
 
 # Paired SMPL -> cleaned target PKL training defaults.
 balanced_sampling: true

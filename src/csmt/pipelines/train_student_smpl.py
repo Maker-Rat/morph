@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Tuple
@@ -13,7 +14,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 import yaml
 
-from csmt.models.student_rt import StudentRT
+from csmt.models.student_rt import FlowMatchingStudentRT, StudentRT
 from csmt.parser.base import try_mkdir
 from csmt.robots.registry import load_robot_spec
 from csmt.tasks.registry import resolve_task_config
@@ -30,6 +31,23 @@ try:
     import wandb
 except Exception:  # pragma: no cover
     wandb = None
+
+
+def _load_flow_matching_path():
+    repo_root = Path(__file__).resolve().parents[3]
+    local_flow_matching = repo_root / "flow_matching"
+    if local_flow_matching.exists():
+        sys.path.insert(0, str(local_flow_matching))
+        cached = sys.modules.get("flow_matching")
+        if cached is not None and not hasattr(cached, "__file__"):
+            del sys.modules["flow_matching"]
+    try:
+        from flow_matching.path import AffineProbPath
+        from flow_matching.path.scheduler import CondOTScheduler
+    except ModuleNotFoundError:
+        from flow_matching.path import AffineProbPath
+        from flow_matching.path.scheduler import CondOTScheduler
+    return AffineProbPath(scheduler=CondOTScheduler())
 
 
 class MotionStats:
@@ -422,6 +440,36 @@ def _build_student_prev_context(model, x_hist, prev_len: int, dst_dim: int):
 
 def _compute_losses(model, x_hist, y_prev, y_tgt, src_root_phys, params, dst_njoints, dst_lo, dst_hi, smpl_mean_t, smpl_std_t, dst_root_mean_t, dst_root_std_t, train: bool):
     x_hist_norm = (x_hist - smpl_mean_t.view(1, 1, -1)) / smpl_std_t.view(1, 1, -1)
+    if str(params.get("model_type", "flow_matching")).lower() == "flow_matching":
+        x_0 = torch.randn_like(y_tgt)
+        t = torch.rand((y_tgt.shape[0],), device=y_tgt.device, dtype=y_tgt.dtype)
+        path_sample = params["_flow_path"].sample(x_0=x_0, x_1=y_tgt, t=t)
+        v_hat = model(x_hist_norm, path_sample.x_t, path_sample.t)
+        loss_flow = nn.functional.mse_loss(v_hat, path_sample.dx_t)
+        one_minus_t = (1.0 - t).view(-1, 1)
+        y_hat = path_sample.x_t + one_minus_t * v_hat
+        loss_im = nn.functional.mse_loss(y_hat[:, :dst_njoints], y_tgt[:, :dst_njoints])
+        src_root = (src_root_phys - dst_root_mean_t.view(1, -1)) / (dst_root_std_t.view(1, -1) + 1e-8)
+        teacher_root = y_tgt[:, dst_njoints:dst_njoints + 4]
+        dst_root = y_hat[:, dst_njoints:dst_njoints + 4]
+        root_target = _root_motion_target(src_root, teacher_root, params["root_motion_target_mode"], params["root_motion_blend_alpha"])
+        loss_root = nn.functional.mse_loss(dst_root, root_target)
+        loss_jl = _joint_limit_loss_normalized(y_hat[:, :dst_njoints], dst_lo, dst_hi, float(params["joint_limit_threshold"]))
+        if y_prev.shape[1] > 1:
+            prev_last = y_prev[:, -1, :]
+            prev_prev = y_prev[:, -2, :]
+            loss_sm = nn.functional.mse_loss(y_hat - prev_last, prev_last - prev_prev)
+        else:
+            loss_sm = torch.zeros((), device=y_hat.device, dtype=y_hat.dtype)
+        total = (
+            loss_flow
+            + float(params["lambda_imitation"]) * loss_im
+            + float(params["lambda_smooth"]) * loss_sm
+            + float(params["lambda_root_motion"]) * loss_root
+            + float(params["lambda_joint_limit"]) * loss_jl
+        )
+        return total, {"flow": loss_flow, "imitation_joint": loss_im, "root_motion": loss_root, "smooth": loss_sm, "joint_limit": loss_jl}
+
     if str(params["prev_context_mode"]).lower() == "student":
         y_prev_in = _build_student_prev_context(model, x_hist_norm, int(y_prev.shape[1]), int(y_tgt.shape[-1]))
     else:
@@ -461,7 +509,7 @@ def _compute_losses(model, x_hist, y_prev, y_tgt, src_root_phys, params, dst_njo
 
 def _evaluate(model, loader, device, params, dst_njoints, dst_lo, dst_hi, smpl_mean_t, smpl_std_t, dst_root_mean_t, dst_root_std_t):
     model.eval()
-    sums = {"loss": 0.0, "imitation_joint": 0.0, "root_motion": 0.0, "smooth": 0.0, "joint_limit": 0.0, "n": 0}
+    sums = {"loss": 0.0, "flow": 0.0, "imitation_joint": 0.0, "root_motion": 0.0, "smooth": 0.0, "joint_limit": 0.0, "n": 0}
     with torch.no_grad():
         for x_hist, y_prev, y_tgt, src_root in loader:
             x_hist = x_hist.to(device, non_blocking=True)
@@ -513,6 +561,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--root-motion-target-mode", choices=["source", "teacher", "blend"], default=None)
     p.add_argument("--root-motion-blend-alpha", type=float, default=None)
     p.add_argument("--prev-context-mode", choices=["teacher", "student"], default=None)
+    p.add_argument("--model-type", choices=["flow_matching", "autoregressive"], default=None)
+    p.add_argument("--flow-steps", type=int, default=None)
+    p.add_argument("--flow-noise-scale", type=float, default=None)
     p.add_argument("--y-prev-noise-std", type=float, default=None)
     p.add_argument("--y-prev-noise-prob", type=float, default=None)
     p.add_argument("--device", type=str, default=None)
@@ -559,6 +610,9 @@ def main() -> None:
         "samples_per_epoch": int(model_cfg.get("samples_per_epoch", 0)),
         "smpl_root_map": str(model_cfg.get("smpl_root_map", "world_z")),
         "resample_smpl_to_dst_fps": bool(model_cfg.get("resample_smpl_to_dst_fps", True)),
+        "model_type": str(model_cfg.get("model_type", "flow_matching")),
+        "flow_steps": int(model_cfg.get("flow_steps", 16)),
+        "flow_noise_scale": float(model_cfg.get("flow_noise_scale", 1.0)),
         "hist_len": int(model_cfg.get("hist_len", 24)),
         "prev_len": int(model_cfg.get("prev_len", 2)),
         "batch_size": int(model_cfg.get("batch_size", 256)),
@@ -590,15 +644,15 @@ def main() -> None:
         "wandb_run_name": model_cfg.get("wandb_run_name", None),
         "wandb_mode": str(model_cfg.get("wandb_mode", "online")),
     }
-    for key in ("batch_size", "epochs", "num_workers", "conv_channels", "gru_hidden", "conv_kernel", "attn_heads"):
+    for key in ("batch_size", "epochs", "num_workers", "conv_channels", "gru_hidden", "conv_kernel", "attn_heads", "flow_steps"):
         value = getattr(cli, key)
         if value is not None:
             params[key] = int(value)
-    for key in ("lr", "weight_decay", "lambda_imitation", "lambda_root_motion", "lambda_smooth", "lambda_joint_limit", "joint_limit_threshold", "root_motion_blend_alpha", "y_prev_noise_std", "y_prev_noise_prob", "conv_dropout", "attn_dropout"):
+    for key in ("lr", "weight_decay", "lambda_imitation", "lambda_root_motion", "lambda_smooth", "lambda_joint_limit", "joint_limit_threshold", "root_motion_blend_alpha", "y_prev_noise_std", "y_prev_noise_prob", "conv_dropout", "attn_dropout", "flow_noise_scale"):
         value = getattr(cli, key)
         if value is not None:
             params[key] = float(value)
-    for key in ("root_motion_target_mode", "prev_context_mode", "device", "wandb_project", "wandb_entity", "wandb_run_name", "wandb_mode", "smpl_root_map"):
+    for key in ("root_motion_target_mode", "prev_context_mode", "device", "wandb_project", "wandb_entity", "wandb_run_name", "wandb_mode", "smpl_root_map", "model_type"):
         value = getattr(cli, key)
         if value is not None:
             params[key] = value
@@ -620,6 +674,8 @@ def main() -> None:
 
     save_dir = Path(params["save_dir"]).expanduser().resolve()
     try_mkdir(str(save_dir))
+    if str(params["model_type"]).lower() == "flow_matching":
+        params["_flow_path"] = _load_flow_matching_path()
     sequences, smpl_mean, smpl_std, meta, dst_stats, dst_robot = _build_sequences(params, output_root)
     train_ds = SmplWindowDataset(sequences, int(params["hist_len"]), int(params["prev_len"]), "train", float(params["val_ratio"]), int(cli.seed), bool(params["balanced_sampling"]), int(params["samples_per_epoch"]))
     val_ds = SmplWindowDataset(sequences, int(params["hist_len"]), int(params["prev_len"]), "val", float(params["val_ratio"]), int(cli.seed), False, 0)
@@ -646,7 +702,10 @@ def main() -> None:
     pin_memory = device.type == "cuda"
     train_loader = DataLoader(train_ds, batch_size=int(params["batch_size"]), shuffle=True, num_workers=int(params["num_workers"]), pin_memory=pin_memory, drop_last=False)
     val_loader = DataLoader(val_ds, batch_size=int(params["batch_size"]), shuffle=False, num_workers=max(0, int(params["num_workers"]) // 2), pin_memory=pin_memory, drop_last=False)
-    model = StudentRT(src_dim=src_dim, dst_dim=dst_dim, hist_len=int(x0.shape[0]), prev_len=int(y0.shape[0]), conv_channels=int(params["conv_channels"]), gru_hidden=int(params["gru_hidden"]), conv_kernel=int(params["conv_kernel"]), conv_dropout=float(params["conv_dropout"]), use_attn=bool(params["use_attn"]), attn_heads=int(params["attn_heads"]), attn_dropout=float(params["attn_dropout"]), predict_residual=False).to(device)
+    if str(params["model_type"]).lower() == "flow_matching":
+        model = FlowMatchingStudentRT(src_dim=src_dim, dst_dim=dst_dim, hist_len=int(x0.shape[0]), conv_channels=int(params["conv_channels"]), gru_hidden=int(params["gru_hidden"]), conv_kernel=int(params["conv_kernel"]), conv_dropout=float(params["conv_dropout"]), use_attn=bool(params["use_attn"]), attn_heads=int(params["attn_heads"]), attn_dropout=float(params["attn_dropout"])).to(device)
+    else:
+        model = StudentRT(src_dim=src_dim, dst_dim=dst_dim, hist_len=int(x0.shape[0]), prev_len=int(y0.shape[0]), conv_channels=int(params["conv_channels"]), gru_hidden=int(params["gru_hidden"]), conv_kernel=int(params["conv_kernel"]), conv_dropout=float(params["conv_dropout"]), use_attn=bool(params["use_attn"]), attn_heads=int(params["attn_heads"]), attn_dropout=float(params["attn_dropout"]), predict_residual=False).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=float(params["lr"]), weight_decay=float(params["weight_decay"]))
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max(1, int(params["epochs"])))
     dst_lo, dst_hi = _normalized_dst_joint_limits(dst_robot, dst_stats)
@@ -658,7 +717,7 @@ def main() -> None:
     dst_root_std = np.maximum(dst_stats.std[-4:].detach().cpu().numpy().astype(np.float32), 1e-8)
     dst_root_mean_t = torch.from_numpy(dst_root_mean).to(device)
     dst_root_std_t = torch.from_numpy(dst_root_std).to(device)
-    config = {**params, "distill_source": "paired_smpl_dst_pkl", "src_dim": src_dim, "dst_dim": dst_dim, "dst_njoints": int(dst_njoints), "hist_len": int(x0.shape[0]), "prev_len": int(y0.shape[0]), "predict_residual": False, "smpl_input_dim": SMPL_INPUT_DIM, "smpl_input_stats_path": str(save_dir / "smpl_input_stats.npz"), "smpl_input_mean": smpl_mean.tolist(), "smpl_input_std": smpl_std.tolist(), "dst_root_mean": dst_root_mean.tolist(), "dst_root_std": dst_root_std.tolist(), "paired_smpl_meta": meta}
+    config = {**{k: v for k, v in params.items() if not k.startswith("_")}, "distill_source": "paired_smpl_dst_pkl", "src_dim": src_dim, "dst_dim": dst_dim, "dst_njoints": int(dst_njoints), "hist_len": int(x0.shape[0]), "prev_len": int(y0.shape[0]), "predict_residual": False, "smpl_input_dim": SMPL_INPUT_DIM, "smpl_input_stats_path": str(save_dir / "smpl_input_stats.npz"), "smpl_input_mean": smpl_mean.tolist(), "smpl_input_std": smpl_std.tolist(), "dst_root_mean": dst_root_mean.tolist(), "dst_root_std": dst_root_std.tolist(), "paired_smpl_meta": meta}
     with (save_dir / "student_config.json").open("w", encoding="utf-8") as f:
         json.dump(config, f, indent=2)
     wandb_run = None
@@ -677,12 +736,12 @@ def main() -> None:
     state = TrainState()
     best_path = save_dir / "best.pt"
     last_path = save_dir / "last.pt"
-    print("Starting paired SMPL RT student training...")
+    print(f"Starting paired SMPL {params['model_type']} student training...")
     print(f"  device={device} train_samples={len(train_ds)} val_samples={len(val_ds)}")
     print(f"  dims src={src_dim} dst={dst_dim} hist={int(x0.shape[0])} prev={int(y0.shape[0])}")
     for epoch in range(1, int(params["epochs"]) + 1):
         model.train()
-        sums = {"loss": 0.0, "imitation_joint": 0.0, "root_motion": 0.0, "smooth": 0.0, "joint_limit": 0.0, "n": 0}
+        sums = {"loss": 0.0, "flow": 0.0, "imitation_joint": 0.0, "root_motion": 0.0, "smooth": 0.0, "joint_limit": 0.0, "n": 0}
         for x_hist, y_prev, y_tgt, src_root in train_loader:
             x_hist = x_hist.to(device, non_blocking=True)
             y_prev = y_prev.to(device, non_blocking=True)
@@ -700,9 +759,10 @@ def main() -> None:
                 sums[k] += float(v.item()) * bsz
             state.step += 1
             if state.step % int(cli.log_iter) == 0:
-                print(f"  step={state.step:7d} loss={loss.item():.6f} imj={logs['imitation_joint'].item():.6f} root={logs['root_motion'].item():.6f} sm={logs['smooth'].item():.6f} jl={logs['joint_limit'].item():.6f}")
+                flow_part = f" flow={logs['flow'].item():.6f}" if "flow" in logs else ""
+                print(f"  step={state.step:7d} loss={loss.item():.6f}{flow_part} imj={logs['imitation_joint'].item():.6f} root={logs['root_motion'].item():.6f} sm={logs['smooth'].item():.6f} jl={logs['joint_limit'].item():.6f}")
                 if wandb_run is not None:
-                    wandb_run.log({"train/step_loss": float(loss.item()), "train/imitation_joint": float(logs["imitation_joint"].item()), "train/root_motion": float(logs["root_motion"].item()), "train/smooth": float(logs["smooth"].item()), "train/joint_limit": float(logs["joint_limit"].item()), "train/lr": float(optimizer.param_groups[0]["lr"]), "epoch": int(epoch), "step": int(state.step)})
+                    wandb_run.log({"train/step_loss": float(loss.item()), "train/flow": float(logs.get("flow", torch.zeros((), device=device)).item()), "train/imitation_joint": float(logs["imitation_joint"].item()), "train/root_motion": float(logs["root_motion"].item()), "train/smooth": float(logs["smooth"].item()), "train/joint_limit": float(logs["joint_limit"].item()), "train/lr": float(optimizer.param_groups[0]["lr"]), "epoch": int(epoch), "step": int(state.step)})
         scheduler.step()
         n = max(1, sums["n"])
         train_stats = {k: v / n for k, v in sums.items() if k != "n"}

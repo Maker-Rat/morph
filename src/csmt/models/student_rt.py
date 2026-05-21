@@ -152,3 +152,126 @@ class StudentRT(nn.Module):
         if self.predict_residual and self.prev_len > 0 and prev_out.shape[1] > 0:
             y_pred = prev_out[:, -1, :] + y_pred
         return y_pred, hidden_out
+
+
+class FlowMatchingStudentRT(nn.Module):
+    """
+    Conditional flow-matching student for frame-wise retargeting.
+
+    Inputs:
+      src_hist: [B, W, src_dim] recent source window
+      x_t:      [B, dst_dim]    noisy/interpolated destination state
+      t:        [B] or scalar   flow time in [0, 1]
+    Output:
+      velocity: [B, dst_dim]    d x_t / d t
+    """
+
+    def __init__(
+        self,
+        src_dim=69,
+        dst_dim=16,
+        hist_len=24,
+        conv_channels=128,
+        gru_hidden=256,
+        conv_kernel=3,
+        conv_dropout=0.1,
+        use_attn=False,
+        attn_heads=4,
+        attn_dropout=0.1,
+        time_dim=64,
+    ):
+        super().__init__()
+        self.src_dim = int(src_dim)
+        self.dst_dim = int(dst_dim)
+        self.hist_len = int(hist_len)
+        self.use_attn = bool(use_attn)
+        self.time_dim = int(time_dim)
+
+        self.in_proj = nn.Conv1d(self.src_dim, conv_channels, kernel_size=1)
+        self.res_blocks = nn.ModuleList([
+            CausalResidualBlock(conv_channels, kernel_size=conv_kernel, dilation=1, dropout=conv_dropout),
+            CausalResidualBlock(conv_channels, kernel_size=conv_kernel, dilation=2, dropout=conv_dropout),
+            CausalResidualBlock(conv_channels, kernel_size=conv_kernel, dilation=4, dropout=conv_dropout),
+        ])
+        self.gru = nn.GRU(
+            input_size=conv_channels,
+            hidden_size=gru_hidden,
+            num_layers=1,
+            batch_first=True,
+        )
+
+        if self.use_attn:
+            if int(attn_heads) <= 0:
+                raise ValueError("attn_heads must be positive when use_attn is enabled")
+            self.temporal_attn = nn.MultiheadAttention(
+                embed_dim=gru_hidden,
+                num_heads=int(attn_heads),
+                dropout=float(attn_dropout),
+                batch_first=True,
+            )
+            self.attn_ln1 = nn.LayerNorm(gru_hidden)
+            self.attn_ff = nn.Sequential(
+                nn.Linear(gru_hidden, gru_hidden * 2),
+                nn.GELU(),
+                nn.Dropout(float(attn_dropout)),
+                nn.Linear(gru_hidden * 2, gru_hidden),
+            )
+            self.attn_ln2 = nn.LayerNorm(gru_hidden)
+            self.attn_dropout = nn.Dropout(float(attn_dropout))
+
+        self.time_mlp = nn.Sequential(
+            nn.Linear(1, self.time_dim),
+            nn.SiLU(),
+            nn.Linear(self.time_dim, self.time_dim),
+        )
+        self.head = nn.Sequential(
+            nn.Linear(gru_hidden + self.dst_dim + self.time_dim, 256),
+            nn.GELU(),
+            nn.Linear(256, 128),
+            nn.GELU(),
+            nn.Linear(128, self.dst_dim),
+        )
+
+    def encode_condition(self, src_hist):
+        x = src_hist.transpose(1, 2)
+        x = self.in_proj(x)
+        for block in self.res_blocks:
+            x = block(x)
+        x = x.transpose(1, 2)
+        gru_out, _ = self.gru(x)
+        if self.use_attn:
+            t_len = int(gru_out.shape[1])
+            attn_mask = torch.triu(
+                torch.ones((t_len, t_len), dtype=torch.bool, device=gru_out.device),
+                diagonal=1,
+            )
+            attn_out, _ = self.temporal_attn(
+                gru_out, gru_out, gru_out, attn_mask=attn_mask, need_weights=False
+            )
+            gru_out = self.attn_ln1(gru_out + self.attn_dropout(attn_out))
+            ff_out = self.attn_ff(gru_out)
+            gru_out = self.attn_ln2(gru_out + self.attn_dropout(ff_out))
+        return gru_out[:, -1, :]
+
+    def forward(self, src_hist, x_t, t):
+        if t.ndim == 0:
+            t = t.expand(x_t.shape[0])
+        t = t.to(device=x_t.device, dtype=x_t.dtype).view(-1, 1)
+        cond = self.encode_condition(src_hist)
+        t_emb = self.time_mlp(t)
+        return self.head(torch.cat([cond, x_t, t_emb], dim=-1))
+
+    @torch.no_grad()
+    def sample(self, src_hist, steps=16, noise_scale=1.0):
+        x = torch.randn(
+            src_hist.shape[0],
+            self.dst_dim,
+            device=src_hist.device,
+            dtype=src_hist.dtype,
+        ) * float(noise_scale)
+        steps = max(1, int(steps))
+        dt = 1.0 / float(steps)
+        for i in range(steps):
+            t = torch.full((src_hist.shape[0],), i / float(steps), device=src_hist.device, dtype=src_hist.dtype)
+            x = x + dt * self(src_hist, x, t)
+        return x

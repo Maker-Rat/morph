@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from csmt.models.student_rt import StudentRT
+from csmt.models.student_rt import FlowMatchingStudentRT, StudentRT
 from csmt.pipelines.infer_teacher import InferenceStats, _motion_to_pkl
 from csmt.robots.registry import load_robot_spec
 from csmt.tasks.registry import resolve_task_config
@@ -160,6 +160,12 @@ def parse_args() -> argparse.Namespace:
             "Use the FPS used during SMPL distillation, usually the paired GMR PKL FPS."
         ),
     )
+    p.add_argument("--flow-steps", type=int, default=0,
+                   help="Euler integration steps for flow-matching checkpoints; 0 uses checkpoint config.")
+    p.add_argument("--flow-noise-scale", type=float, default=-1.0,
+                   help="Initial Gaussian noise scale for flow-matching checkpoints; negative uses checkpoint config.")
+    p.add_argument("--seed", type=int, default=42,
+                   help="Random seed for flow-matching sampling.")
     return p.parse_args()
 
 
@@ -197,6 +203,7 @@ def main() -> None:
     use_attn = bool(cfg.get("use_attn", True))
     attn_heads = int(cfg.get("attn_heads", 4))
     attn_dropout = float(cfg.get("attn_dropout", 0.1))
+    model_type = str(cfg.get("model_type", "autoregressive")).lower()
 
     if src_dim != SMPL_INPUT_DIM:
         raise ValueError(
@@ -210,20 +217,34 @@ def main() -> None:
         explicit_stats_path=args.smpl_stats,
     )
 
-    model = StudentRT(
-        src_dim=src_dim,
-        dst_dim=dst_dim,
-        hist_len=hist_len,
-        prev_len=prev_len,
-        conv_channels=conv_channels,
-        gru_hidden=gru_hidden,
-        conv_kernel=conv_kernel,
-        conv_dropout=conv_dropout,
-        use_attn=use_attn,
-        attn_heads=attn_heads,
-        attn_dropout=attn_dropout,
-        predict_residual=False,
-    ).to(device)
+    if model_type == "flow_matching":
+        model = FlowMatchingStudentRT(
+            src_dim=src_dim,
+            dst_dim=dst_dim,
+            hist_len=hist_len,
+            conv_channels=conv_channels,
+            gru_hidden=gru_hidden,
+            conv_kernel=conv_kernel,
+            conv_dropout=conv_dropout,
+            use_attn=use_attn,
+            attn_heads=attn_heads,
+            attn_dropout=attn_dropout,
+        ).to(device)
+    else:
+        model = StudentRT(
+            src_dim=src_dim,
+            dst_dim=dst_dim,
+            hist_len=hist_len,
+            prev_len=prev_len,
+            conv_channels=conv_channels,
+            gru_hidden=gru_hidden,
+            conv_kernel=conv_kernel,
+            conv_dropout=conv_dropout,
+            use_attn=use_attn,
+            attn_heads=attn_heads,
+            attn_dropout=attn_dropout,
+            predict_residual=False,
+        ).to(device)
     model.load_state_dict(checkpoint.get("model", checkpoint))
     model.eval()
 
@@ -277,18 +298,25 @@ def main() -> None:
     for _ in range(max(1, prev_len)):
         prev_out.append(zero_dst.copy())
 
+    flow_steps = int(args.flow_steps) if int(args.flow_steps) > 0 else int(cfg.get("flow_steps", 16))
+    flow_noise_scale = float(args.flow_noise_scale) if float(args.flow_noise_scale) >= 0.0 else float(cfg.get("flow_noise_scale", 1.0))
+    if model_type == "flow_matching":
+        torch.manual_seed(int(args.seed))
+
     preds = []
     with torch.no_grad():
         for t in range(t_len):
             src_hist.append(smpl_feat_norm[t].astype(np.float32))
             x_hist = torch.from_numpy(np.stack(src_hist, axis=0)).unsqueeze(0).to(device)
-            if prev_len > 0:
+            if model_type == "flow_matching":
+                y_hat = model.sample(x_hist, steps=flow_steps, noise_scale=flow_noise_scale)
+            elif prev_len > 0:
                 y_prev_np = np.stack(list(prev_out)[-prev_len:], axis=0)
                 y_prev = torch.from_numpy(y_prev_np).unsqueeze(0).to(device)
+                y_hat, _ = model(x_hist, y_prev)
             else:
                 y_prev = torch.zeros(1, 0, dst_dim, device=device)
-
-            y_hat, _ = model(x_hist, y_prev)
+                y_hat, _ = model(x_hist, y_prev)
             y_np = y_hat[0].detach().cpu().numpy().astype(np.float32)
 
             if args.root_motion_mode != "student":
@@ -338,6 +366,10 @@ def main() -> None:
         print(f"  smpl_fps: {float(fps):.6f}")
     print(f"  frames: {t_len}")
     print(f"  dims: src={src_dim} dst={dst_dim} hist={hist_len} prev={prev_len}")
+    print(f"  model_type: {model_type}")
+    if model_type == "flow_matching":
+        print(f"  flow_steps: {flow_steps}")
+        print(f"  flow_noise_scale: {flow_noise_scale:g}")
     print(f"  smpl_low_std_clamped: {int(np.sum(low_std_mask))} channels (threshold={low_std_threshold:g})")
     print(
         f"  root_motion_mode: {args.root_motion_mode}"

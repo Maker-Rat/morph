@@ -413,6 +413,8 @@ configs/models/student_smpl.yaml
 Current SMPL student details:
 
 - `smpl_input_dim: 69`
+- `model_type: flow_matching` trains a conditional velocity field instead of the older autoregressive next-frame regressor
+- `flow_steps` and `flow_noise_scale` control Euler sampling at inference time
 - SMPL is resampled to the paired Go2 PKL fps by default
 - SMPL input normalization is computed from the paired training set and saved with the checkpoint
 - `smpl_root_map: world_z` keeps vertical velocity in world Z, which is usually better for jumps/squats than treating all root velocity as local horizontal motion
@@ -431,6 +433,7 @@ python -m csmt.pipelines.infer_student_smpl \
   --output-pkl ./demo_output/student_smpl_go2.pkl \
   --device cuda:0 \
   --root-motion-mode student \
+  --flow-steps 16 \
   --target-fps 30 \
   --dst-start-height 0.28
 ```

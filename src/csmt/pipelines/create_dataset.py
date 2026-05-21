@@ -27,11 +27,15 @@ def load_pkl_file(pkl_path: str) -> Tuple[List[Tuple], Optional[float]]:
         fps = data.get("fps", None)
         base_trans = data.get("root_pos", data.get("base_trans", data.get("base_translation", None)))
         base_rot = data.get("root_rot", data.get("base_rot", data.get("base_rotation", None)))
+        heading_rot = data.get("root_heading_rot", None)
         joint_pos = data.get("dof_pos", data.get("joint_pos", data.get("joint_positions", None)))
         if base_trans is None or base_rot is None or joint_pos is None:
             raise ValueError(f"Missing required keys. Available: {list(data.keys())}")
         n_frames = len(base_trans)
-        motion_data = [(base_trans[i], base_rot[i], joint_pos[i]) for i in range(n_frames)]
+        if heading_rot is not None:
+            motion_data = [(base_trans[i], base_rot[i], joint_pos[i], heading_rot[i]) for i in range(n_frames)]
+        else:
+            motion_data = [(base_trans[i], base_rot[i], joint_pos[i]) for i in range(n_frames)]
         return motion_data, fps
 
     if isinstance(data, list):
@@ -253,12 +257,17 @@ def mirror_motion_segment(segment: List[Tuple], robot_id: str, specs: Dict[str, 
     base_trans = np.asarray([f[0] for f in segment], dtype=np.float32)
     base_rot = np.asarray([f[1] for f in segment], dtype=np.float32)
     joint_pos = np.asarray([f[2] for f in segment], dtype=np.float32)
+    has_heading_rot = len(segment[0]) >= 4
+    heading_rot = np.asarray([f[3] for f in segment], dtype=np.float32) if has_heading_rot else None
 
     base_trans_m = base_trans.copy()
     base_trans_m[:, 1] *= -1.0
     base_rot_m = mirror_quaternion_sequence_xyzw(base_rot)
     joint_pos_m = mirror_joint_positions(joint_pos, robot_id, specs)
+    heading_rot_m = mirror_quaternion_sequence_xyzw(heading_rot) if heading_rot is not None else None
 
+    if heading_rot_m is not None:
+        return [(base_trans_m[i], base_rot_m[i], joint_pos_m[i], heading_rot_m[i]) for i in range(len(segment))]
     return [(base_trans_m[i], base_rot_m[i], joint_pos_m[i]) for i in range(len(segment))]
 
 
@@ -408,8 +417,9 @@ def process_pkl_directory(
                     base_trans = np.asarray([f[0] for f in work_segment], dtype=np.float32)
                     base_rot = np.asarray([f[1] for f in work_segment], dtype=np.float32)
                     joint_pos = np.asarray([f[2] for f in work_segment], dtype=np.float32)
+                    heading_rot = np.asarray([f[3] if len(f) >= 4 else f[1] for f in work_segment], dtype=np.float32)
 
-                    lin_vel_local, yaw_rate, yaw = compute_root_features(base_trans, base_rot, dt)
+                    lin_vel_local, yaw_rate, yaw = compute_root_features(base_trans, heading_rot, dt)
                     windowed = create_sliding_windows(
                         base_trans=base_trans,
                         base_rot=base_rot,

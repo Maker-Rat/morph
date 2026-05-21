@@ -168,8 +168,8 @@ def _load_motion_pkl(path: Path):
         return pickle.load(f)
 
 
-def _extract_motion_arrays(motion_data) -> Tuple[np.ndarray, np.ndarray, np.ndarray, float]:
-    """Return (joint_pos, root_pos, root_rot_xyzw, fps)."""
+def _extract_motion_arrays(motion_data) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float]:
+    """Return (joint_pos, root_pos, root_rot_xyzw, heading_rot_xyzw, fps)."""
     if isinstance(motion_data, dict):
         fps = float(motion_data.get("fps", 30.0))
         joint_pos = np.asarray(
@@ -184,9 +184,10 @@ def _extract_motion_arrays(motion_data) -> Tuple[np.ndarray, np.ndarray, np.ndar
             motion_data.get("root_rot", motion_data.get("base_quat", motion_data.get("base_rotation", []))),
             dtype=np.float32,
         )
+        heading_rot = np.asarray(motion_data.get("root_heading_rot", root_rot), dtype=np.float32)
         if len(joint_pos) == 0 or len(root_pos) == 0 or len(root_rot) == 0:
             raise ValueError("PKL dict missing required motion keys")
-        return joint_pos, root_pos, root_rot, fps
+        return joint_pos, root_pos, root_rot, heading_rot, fps
 
     if isinstance(motion_data, list):
         if len(motion_data) == 0:
@@ -194,7 +195,8 @@ def _extract_motion_arrays(motion_data) -> Tuple[np.ndarray, np.ndarray, np.ndar
         root_pos = np.asarray([item[0] for item in motion_data], dtype=np.float32)
         root_rot = np.asarray([item[1] for item in motion_data], dtype=np.float32)
         joint_pos = np.asarray([item[2] for item in motion_data], dtype=np.float32)
-        return joint_pos, root_pos, root_rot, 30.0
+        heading_rot = np.asarray([item[3] if len(item) >= 4 else item[1] for item in motion_data], dtype=np.float32)
+        return joint_pos, root_pos, root_rot, heading_rot, 30.0
 
     raise ValueError(f"Unsupported PKL type: {type(motion_data)}")
 
@@ -235,15 +237,16 @@ def _compute_yaw_rate(yaw: np.ndarray, dt: float) -> np.ndarray:
 
 
 def _pkl_to_normalized_features(path: Path, stats: MotionStats, max_frames: int) -> tuple[np.ndarray, float]:
-    joint_pos, root_pos, root_rot, fps = _extract_motion_arrays(_load_motion_pkl(path))
+    joint_pos, root_pos, root_rot, heading_rot, fps = _extract_motion_arrays(_load_motion_pkl(path))
     n_frames = int(len(joint_pos)) if int(max_frames) <= 0 else min(int(len(joint_pos)), int(max_frames))
     joint_pos = joint_pos[:n_frames]
     root_pos = root_pos[:n_frames]
     root_rot = root_rot[:n_frames]
+    heading_rot = heading_rot[:n_frames]
     if joint_pos.shape[-1] != int(stats.njoints):
         raise ValueError(f"{path.name}: joint dim {joint_pos.shape[-1]} != expected {stats.njoints}")
     dt = 1.0 / max(float(fps), 1e-8)
-    yaw = _extract_yaw(root_rot)
+    yaw = _extract_yaw(heading_rot)
     lin_vel_local = _world_vel_to_local(_compute_world_linear_vel(root_pos, dt), yaw)
     yaw_rate = _compute_yaw_rate(yaw, dt)
     motion = np.concatenate([joint_pos, lin_vel_local, yaw_rate[:, None]], axis=-1).astype(np.float32)

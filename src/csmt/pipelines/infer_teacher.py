@@ -142,8 +142,8 @@ def _save_motion_pkl(path: str, payload):
         pickle.dump(payload, f)
 
 
-def _extract_motion_arrays(motion_data) -> Tuple[np.ndarray, np.ndarray, np.ndarray, float]:
-    """Return (joint_pos, base_trans, base_rot_xyzw, fps)."""
+def _extract_motion_arrays(motion_data) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float]:
+    """Return (joint_pos, base_trans, base_rot_xyzw, heading_rot_xyzw, fps)."""
     if isinstance(motion_data, dict):
         fps = float(motion_data.get("fps", 30.0))
         joint_pos = np.asarray(
@@ -158,9 +158,10 @@ def _extract_motion_arrays(motion_data) -> Tuple[np.ndarray, np.ndarray, np.ndar
             motion_data.get("root_rot", motion_data.get("base_quat", motion_data.get("base_rotation", []))),
             dtype=np.float32,
         )
+        heading_rot = np.asarray(motion_data.get("root_heading_rot", base_rot), dtype=np.float32)
         if len(joint_pos) == 0 or len(base_trans) == 0 or len(base_rot) == 0:
             raise ValueError("Input PKL dict missing required motion keys")
-        return joint_pos, base_trans, base_rot, fps
+        return joint_pos, base_trans, base_rot, heading_rot, fps
 
     if isinstance(motion_data, list):
         if len(motion_data) == 0:
@@ -168,7 +169,8 @@ def _extract_motion_arrays(motion_data) -> Tuple[np.ndarray, np.ndarray, np.ndar
         base_trans = np.asarray([item[0] for item in motion_data], dtype=np.float32)
         base_rot = np.asarray([item[1] for item in motion_data], dtype=np.float32)
         joint_pos = np.asarray([item[2] for item in motion_data], dtype=np.float32)
-        return joint_pos, base_trans, base_rot, 30.0
+        heading_rot = np.asarray([item[3] if len(item) >= 4 else item[1] for item in motion_data], dtype=np.float32)
+        return joint_pos, base_trans, base_rot, heading_rot, 30.0
 
     raise ValueError(f"Unsupported input PKL type: {type(motion_data)}")
 
@@ -214,14 +216,15 @@ def _prepare_src_input(
     device: torch.device,
     max_frames: int = 0,
 ) -> Tuple[torch.Tensor, float, float, float]:
-    joint_pos, base_trans, base_rot, fps = _extract_motion_arrays(motion_pkl)
+    joint_pos, base_trans, base_rot, heading_rot, fps = _extract_motion_arrays(motion_pkl)
     n_frames = len(joint_pos) if int(max_frames) <= 0 else min(len(joint_pos), int(max_frames))
     joint_pos = joint_pos[:n_frames]
     base_trans = base_trans[:n_frames]
     base_rot = base_rot[:n_frames]
+    heading_rot = heading_rot[:n_frames]
 
     dt = 1.0 / float(fps)
-    yaw = _extract_yaw(base_rot)
+    yaw = _extract_yaw(heading_rot)
     lin_vel_world = _compute_world_linear_vel(base_trans, dt)
     lin_vel_local = _world_vel_to_local(lin_vel_world, yaw)
     yaw_rate = _compute_yaw_rate(yaw, dt)

@@ -447,7 +447,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-correct-root-yaw", dest="correct_root_yaw", action="store_false")
 
     p.add_argument("--lambda-preserve-joints", type=float, default=None)
-    p.add_argument("--lambda-preserve-root-vel", type=float, default=None)
+    p.add_argument("--lambda-preserve-root-vel", type=float, default=None,
+                   help="Legacy alias: sets XY, Z, and yaw-rate root preserve weights together.")
+    p.add_argument("--lambda-preserve-root-vel-xy", type=float, default=None)
+    p.add_argument("--lambda-preserve-root-vel-z", type=float, default=None)
+    p.add_argument("--lambda-preserve-root-yaw-rate", type=float, default=None)
     p.add_argument("--lambda-smooth", type=float, default=None)
     p.add_argument("--lambda-skating", type=float, default=None)
     p.add_argument("--lambda-grounding", type=float, default=None)
@@ -505,7 +509,9 @@ def main() -> None:
         "train_seq_len": int(model_cfg.get("train_seq_len", 1024)),
         "eval_seq_len": int(model_cfg.get("eval_seq_len", 0)),
         "lambda_preserve_joints": float(model_cfg.get("lambda_preserve_joints", model_cfg.get("lambda_preserve", 1.0))),
-        "lambda_preserve_root_vel": float(model_cfg.get("lambda_preserve_root_vel", 1.0)),
+        "lambda_preserve_root_vel_xy": float(model_cfg.get("lambda_preserve_root_vel_xy", model_cfg.get("lambda_preserve_root_vel", 1.0))),
+        "lambda_preserve_root_vel_z": float(model_cfg.get("lambda_preserve_root_vel_z", model_cfg.get("lambda_preserve_root_vel", 1.0))),
+        "lambda_preserve_root_yaw_rate": float(model_cfg.get("lambda_preserve_root_yaw_rate", model_cfg.get("lambda_preserve_root_vel", 1.0))),
         "lambda_smooth": float(model_cfg.get("lambda_smooth", 0.1)),
         "lambda_skating": float(model_cfg.get("lambda_skating", resolved.loss_weights.get("lambda_skating", 0.0))),
         "lambda_grounding": float(model_cfg.get("lambda_grounding", resolved.loss_weights.get("lambda_grounding", 0.0))),
@@ -525,12 +531,18 @@ def main() -> None:
             params[key] = int(v)
     for key in (
         "lr", "weight_decay", "dropout", "joint_delta_max", "root_pos_delta_max", "yaw_delta_max",
-        "lambda_preserve_joints", "lambda_preserve_root_vel", "lambda_smooth", "lambda_skating",
+        "lambda_preserve_joints", "lambda_preserve_root_vel_xy", "lambda_preserve_root_vel_z",
+        "lambda_preserve_root_yaw_rate", "lambda_smooth", "lambda_skating",
         "lambda_grounding", "lambda_joint_limits", "ground_margin", "src_start_height", "dst_start_height",
     ):
         v = getattr(cli, key)
         if v is not None:
             params[key] = float(v)
+    if cli.lambda_preserve_root_vel is not None:
+        legacy_root_weight = float(cli.lambda_preserve_root_vel)
+        params["lambda_preserve_root_vel_xy"] = legacy_root_weight
+        params["lambda_preserve_root_vel_z"] = legacy_root_weight
+        params["lambda_preserve_root_yaw_rate"] = legacy_root_weight
     if cli.correct_root_motion is not None:
         params["correct_root_motion"] = bool(cli.correct_root_motion)
     for key in ("correct_root_xy", "correct_root_z", "correct_root_yaw"):
@@ -778,7 +790,9 @@ def main() -> None:
         sums = {
             "total": 0.0,
             "preserve_j": 0.0,
-            "preserve_root_vel": 0.0,
+            "preserve_root_vel_xy": 0.0,
+            "preserve_root_vel_z": 0.0,
+            "preserve_root_yaw_rate": 0.0,
             "smooth": 0.0,
             "physics": 0.0,
             "joint_limits": 0.0,
@@ -817,7 +831,10 @@ def main() -> None:
             preserve_j = _masked_mse(corrected_denorm[..., :dst_njoints], teacher_batch[..., :dst_njoints], mask)
             corrected_root_vel = _trajectory_root_velocity_local(corrected_denorm, dst_njoints)
             teacher_root_vel = teacher_features[:, 1:, dst_njoints:dst_njoints + 4]
-            preserve_root_vel = _masked_mse_pair(corrected_root_vel, teacher_root_vel, mask[:, 1:])
+            root_vel_mask = mask[:, 1:]
+            preserve_root_vel_xy = _masked_mse_pair(corrected_root_vel[..., :2], teacher_root_vel[..., :2], root_vel_mask)
+            preserve_root_vel_z = _masked_mse_pair(corrected_root_vel[..., 2:3], teacher_root_vel[..., 2:3], root_vel_mask)
+            preserve_root_yaw_rate = _masked_mse_pair(corrected_root_vel[..., 3:4], teacher_root_vel[..., 3:4], root_vel_mask)
             smooth = _smooth_loss(delta, mask)
 
             physics_total = torch.zeros((), dtype=teacher_batch.dtype, device=args.device)
@@ -864,7 +881,9 @@ def main() -> None:
 
             total = (
                 float(params["lambda_preserve_joints"]) * preserve_j
-                + float(params["lambda_preserve_root_vel"]) * preserve_root_vel
+                + float(params["lambda_preserve_root_vel_xy"]) * preserve_root_vel_xy
+                + float(params["lambda_preserve_root_vel_z"]) * preserve_root_vel_z
+                + float(params["lambda_preserve_root_yaw_rate"]) * preserve_root_yaw_rate
                 + float(params["lambda_smooth"]) * smooth
                 + physics
                 + float(params["lambda_joint_limits"]) * jl
@@ -879,7 +898,9 @@ def main() -> None:
             sums["n"] += nclip
             sums["total"] += float(total.item()) * nclip
             sums["preserve_j"] += float(preserve_j.item()) * nclip
-            sums["preserve_root_vel"] += float(preserve_root_vel.item()) * nclip
+            sums["preserve_root_vel_xy"] += float(preserve_root_vel_xy.item()) * nclip
+            sums["preserve_root_vel_z"] += float(preserve_root_vel_z.item()) * nclip
+            sums["preserve_root_yaw_rate"] += float(preserve_root_yaw_rate.item()) * nclip
             sums["smooth"] += float(smooth.item()) * nclip
             sums["physics"] += float(physics.item()) * nclip
             sums["joint_limits"] += float(jl.item()) * nclip
@@ -895,7 +916,9 @@ def main() -> None:
                 step_metrics = {
                     "train/step_loss": sums["total"] / n,
                     "train/step_preserve_joints": sums["preserve_j"] / n,
-                    "train/step_preserve_root_vel": sums["preserve_root_vel"] / n,
+                    "train/step_preserve_root_vel_xy": sums["preserve_root_vel_xy"] / n,
+                    "train/step_preserve_root_vel_z": sums["preserve_root_vel_z"] / n,
+                    "train/step_preserve_root_yaw_rate": sums["preserve_root_yaw_rate"] / n,
                     "train/step_physics": sums["physics"] / n,
                     "train/step_smooth": sums["smooth"] / n,
                     "train/step_joint_limits": sums["joint_limits"] / n,
@@ -903,7 +926,8 @@ def main() -> None:
                 print(
                     f"  step={step_local:5d} loss={step_metrics['train/step_loss']:.6f} "
                     f"pj={step_metrics['train/step_preserve_joints']:.6f} "
-                    f"prv={step_metrics['train/step_preserve_root_vel']:.6f} "
+                    f"prxy={step_metrics['train/step_preserve_root_vel_xy']:.6f} "
+                    f"prz={step_metrics['train/step_preserve_root_vel_z']:.6f} "
                     f"phy={step_metrics['train/step_physics']:.6f} sm={step_metrics['train/step_smooth']:.6f}"
                 )
                 if wandb_run is not None:
@@ -913,7 +937,9 @@ def main() -> None:
         return {
             "total": sums["total"] / n,
             "preserve_j": sums["preserve_j"] / n,
-            "preserve_root_vel": sums["preserve_root_vel"] / n,
+            "preserve_root_vel_xy": sums["preserve_root_vel_xy"] / n,
+            "preserve_root_vel_z": sums["preserve_root_vel_z"] / n,
+            "preserve_root_yaw_rate": sums["preserve_root_yaw_rate"] / n,
             "smooth": sums["smooth"] / n,
             "physics": sums["physics"] / n,
             "joint_limits": sums["joint_limits"] / n,
@@ -941,7 +967,8 @@ def main() -> None:
         print(
             f"[epoch {epoch:03d}] train={train_stats['total']:.6f} val={val_stats['total']:.6f} "
             f"pj={val_stats['preserve_j']:.6f} "
-            f"prv={val_stats['preserve_root_vel']:.6f} "
+            f"prxy={val_stats['preserve_root_vel_xy']:.6f} "
+            f"prz={val_stats['preserve_root_vel_z']:.6f} "
             f"phy={val_stats['physics']:.6f} jl={val_stats['joint_limits']:.6f} "
             f"zshift={dst_z_shift:.4f} mode=zero_nominal lr={lr:.6e}"
         )

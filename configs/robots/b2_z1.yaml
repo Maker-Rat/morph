@@ -1,0 +1,62 @@
+robot_id: b2_z1
+source_xml: assets/robots/b2_z1/b2_with_z1.xml
+fk_xml: assets/fk/b2_z1_fk.xml
+njoints: 19
+nbodies: 27
+
+# joint_index_reference:
+#   [0] FL_hip_joint
+#   [1] FL_thigh_joint
+#   [2] FL_calf_joint
+#   [3] FR_hip_joint
+#   [4] FR_thigh_joint
+#   [5] FR_calf_joint
+#   [6] RL_hip_joint
+#   [7] RL_thigh_joint
+#   [8] RL_calf_joint
+#   [9] RR_hip_joint
+#   [10] RR_thigh_joint
+#   [11] RR_calf_joint
+#   [12] joint1
+#   [13] joint2
+#   [14] joint3
+#   [15] joint4
+#   [16] joint5
+#   [17] joint6
+#   [18] jointGripper
+# body_index_reference:
+#   [0] base_link
+#   [1] FL_hip
+#   [2] FL_thigh
+#   [3] FL_calf
+#   [4] FL_foot
+#   [5] FR_hip
+#   [6] FR_thigh
+#   [7] FR_calf
+#   [8] FR_foot
+#   [9] RL_hip
+#   [10] RL_thigh
+#   [11] RL_calf
+#   [12] RL_foot
+#   [13] RR_hip
+#   [14] RR_thigh
+#   [15] RR_calf
+#   [16] RR_foot
+#   [17] z1_mount_computer
+#   [18] link00
+#   [19] link01
+#   [20] link02
+#   [21] link03
+#   [22] link04
+#   [23] link05
+#   [24] link06
+#   [25] gripperStator
+#   [26] gripperMover
+nominal_base_height: 0.58
+joint_limits:
+  lower: [-0.87, -0.94, -2.82, -0.87, -0.94, -2.82, -0.87, -0.94, -2.82, -0.87, -0.94,
+    -2.82, -2.618, 0.0, -4.78, -1.744, -1.727, -2.79, -1.57]
+  upper: [0.87, 4.69, -0.43, 0.87, 4.69, -0.43, 0.87, 4.69, -0.43, 0.87, 4.69, -0.43,
+    2.618, 3.14, 0.0, 1.57, 1.727, 2.79, 0.0]
+  source: xml_effective_range
+base_body: base_link

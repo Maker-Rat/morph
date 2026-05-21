@@ -138,21 +138,22 @@ def _resample_dict_payload(data: Dict[str, Any], src_fps: float, dst_fps: float,
 
     if "root_pos" in data:
         out["root_pos"] = _resample_linear(np.asarray(data["root_pos"], dtype=np.float32), src_t, dst_t)
-    if "root_rot" in data:
-        root_rot = np.asarray(data["root_rot"], dtype=np.float32)
-        if root_rot.shape[0] != n_frames or root_rot.shape[-1] != 4:
-            raise ValueError(f"root_rot must be [T,4], got {root_rot.shape}")
-        if quat_convention == "wxyz":
-            rot_xyzw = np.stack([root_rot[:, 1], root_rot[:, 2], root_rot[:, 3], root_rot[:, 0]], axis=-1)
-            rot_xyzw_r = _resample_quat_sequence(rot_xyzw, src_t, dst_t)
-            out["root_rot"] = np.stack(
-                [rot_xyzw_r[:, 3], rot_xyzw_r[:, 0], rot_xyzw_r[:, 1], rot_xyzw_r[:, 2]], axis=-1
-            ).astype(np.float32)
-        else:
-            out["root_rot"] = _resample_quat_sequence(root_rot, src_t, dst_t)
+    for quat_key in ("root_rot", "root_heading_rot"):
+        if quat_key in data:
+            quat = np.asarray(data[quat_key], dtype=np.float32)
+            if quat.shape[0] != n_frames or quat.shape[-1] != 4:
+                raise ValueError(f"{quat_key} must be [T,4], got {quat.shape}")
+            if quat_convention == "wxyz":
+                rot_xyzw = np.stack([quat[:, 1], quat[:, 2], quat[:, 3], quat[:, 0]], axis=-1)
+                rot_xyzw_r = _resample_quat_sequence(rot_xyzw, src_t, dst_t)
+                out[quat_key] = np.stack(
+                    [rot_xyzw_r[:, 3], rot_xyzw_r[:, 0], rot_xyzw_r[:, 1], rot_xyzw_r[:, 2]], axis=-1
+                ).astype(np.float32)
+            else:
+                out[quat_key] = _resample_quat_sequence(quat, src_t, dst_t)
 
     for k, v in data.items():
-        if k in ("dof_pos", "root_pos", "root_rot", "fps"):
+        if k in ("dof_pos", "root_pos", "root_rot", "root_heading_rot", "fps"):
             continue
         if isinstance(v, np.ndarray) and v.ndim >= 1 and v.shape[0] == n_frames:
             out[k] = _resample_linear(v, src_t, dst_t)
@@ -169,6 +170,8 @@ def _resample_list_payload(data: List[Any], src_fps: float, dst_fps: float, quat
         root_pos = np.asarray([f[0] for f in data], dtype=np.float32)
         root_rot = np.asarray([f[1] for f in data], dtype=np.float32)
         dof_pos = np.asarray([f[2] for f in data], dtype=np.float32)
+        has_heading_rot = len(data[0]) >= 4
+        heading_rot = np.asarray([f[3] for f in data], dtype=np.float32) if has_heading_rot else None
     except Exception as exc:
         raise ValueError("list payload must contain frames like (root_pos, root_rot, dof_pos)") from exc
 
@@ -177,13 +180,18 @@ def _resample_list_payload(data: List[Any], src_fps: float, dst_fps: float, quat
 
     root_pos_r = _resample_linear(root_pos, src_t, dst_t)
     dof_pos_r = _resample_linear(dof_pos, src_t, dst_t)
-    if quat_convention == "wxyz":
-        rot_xyzw = np.stack([root_rot[:, 1], root_rot[:, 2], root_rot[:, 3], root_rot[:, 0]], axis=-1)
-        rot_xyzw_r = _resample_quat_sequence(rot_xyzw, src_t, dst_t)
-        root_rot_r = np.stack([rot_xyzw_r[:, 3], rot_xyzw_r[:, 0], rot_xyzw_r[:, 1], rot_xyzw_r[:, 2]], axis=-1)
-    else:
-        root_rot_r = _resample_quat_sequence(root_rot, src_t, dst_t)
+    def resample_quat(quat: np.ndarray) -> np.ndarray:
+        if quat_convention == "wxyz":
+            rot_xyzw = np.stack([quat[:, 1], quat[:, 2], quat[:, 3], quat[:, 0]], axis=-1)
+            rot_xyzw_r = _resample_quat_sequence(rot_xyzw, src_t, dst_t)
+            return np.stack([rot_xyzw_r[:, 3], rot_xyzw_r[:, 0], rot_xyzw_r[:, 1], rot_xyzw_r[:, 2]], axis=-1)
+        return _resample_quat_sequence(quat, src_t, dst_t)
 
+    root_rot_r = resample_quat(root_rot)
+    heading_rot_r = resample_quat(heading_rot) if heading_rot is not None else None
+
+    if heading_rot_r is not None:
+        return [(root_pos_r[i], root_rot_r[i], dof_pos_r[i], heading_rot_r[i]) for i in range(len(dst_t))]
     return [(root_pos_r[i], root_rot_r[i], dof_pos_r[i]) for i in range(len(dst_t))]
 
 

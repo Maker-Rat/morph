@@ -26,11 +26,12 @@ def _resolve_robot_xml(output_root: Path, robot_id: str, xml_override: Optional[
     return xml_path.resolve()
 
 
-def _extract_motion_arrays(payload: Any) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Optional[float]]:
+def _extract_motion_arrays(payload: Any) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Optional[np.ndarray], Optional[float]]:
     if isinstance(payload, dict):
         dof = payload.get("dof_pos", payload.get("joint_pos", payload.get("joint_positions", None)))
         pos = payload.get("root_pos", payload.get("base_trans", payload.get("base_translation", None)))
         rot = payload.get("root_rot", payload.get("base_rot", payload.get("base_rotation", None)))
+        heading_rot = payload.get("root_heading_rot", None)
         if dof is None:
             raise ValueError("PKL dict missing dof_pos/joint_pos")
         if pos is None:
@@ -39,7 +40,8 @@ def _extract_motion_arrays(payload: Any) -> Tuple[np.ndarray, np.ndarray, np.nda
             rot = np.tile(np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32), (len(dof), 1))
         fps = payload.get("fps", None)
         fps = float(fps) if fps is not None else None
-        return np.asarray(dof, dtype=np.float32), np.asarray(pos, dtype=np.float32), np.asarray(rot, dtype=np.float32), fps
+        heading_rot_arr = None if heading_rot is None else np.asarray(heading_rot, dtype=np.float32)
+        return np.asarray(dof, dtype=np.float32), np.asarray(pos, dtype=np.float32), np.asarray(rot, dtype=np.float32), heading_rot_arr, fps
 
     if isinstance(payload, list):
         if len(payload) == 0:
@@ -47,12 +49,13 @@ def _extract_motion_arrays(payload: Any) -> Tuple[np.ndarray, np.ndarray, np.nda
         pos = np.asarray([f[0] for f in payload], dtype=np.float32)
         rot = np.asarray([f[1] for f in payload], dtype=np.float32)
         dof = np.asarray([f[2] for f in payload], dtype=np.float32)
-        return dof, pos, rot, None
+        heading_rot = np.asarray([f[3] for f in payload], dtype=np.float32) if len(payload[0]) >= 4 else None
+        return dof, pos, rot, heading_rot, None
 
     raise ValueError(f"Unsupported PKL payload type: {type(payload)}")
 
 
-def _load_motion(path: Path) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Optional[float]]:
+def _load_motion(path: Path) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Optional[np.ndarray], Optional[float]]:
     with path.open("rb") as f:
         payload = pickle.load(f)
     return _extract_motion_arrays(payload)
@@ -226,11 +229,32 @@ def _yaw_from_quat(quat: np.ndarray, convention: str) -> float:
     return float(np.arctan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z)))
 
 
+def _compute_trajectory_heading(root_pos: np.ndarray, smooth_frames: int = 5, min_step: float = 1e-4) -> np.ndarray:
+    pos = np.asarray(root_pos, dtype=np.float64)
+    n = int(pos.shape[0])
+    if n <= 0:
+        return np.zeros((0,), dtype=np.float32)
+    if n == 1:
+        return np.zeros((1,), dtype=np.float32)
+
+    radius = max(1, int(smooth_frames))
+    heading = np.zeros((n,), dtype=np.float64)
+    last_yaw = 0.0
+    for i in range(n):
+        i0 = max(0, i - radius)
+        i1 = min(n - 1, i + radius)
+        delta = pos[i1, :2] - pos[i0, :2]
+        if float(np.linalg.norm(delta)) > float(min_step):
+            last_yaw = float(np.arctan2(delta[1], delta[0]))
+        heading[i] = last_yaw
+
+    return np.unwrap(heading).astype(np.float32)
+
+
 def _draw_heading_overlay(
     viewer,
     root_pos: np.ndarray,
-    root_quat: np.ndarray,
-    quat_convention: str,
+    yaw: float,
     length: float,
     height: float,
 ) -> int:
@@ -242,7 +266,7 @@ def _draw_heading_overlay(
 
     base = np.asarray(root_pos, dtype=np.float64).reshape(3).copy()
     base[2] += float(height)
-    yaw = _yaw_from_quat(root_quat, quat_convention)
+    yaw = float(yaw)
     tip = base + float(length) * np.array([np.cos(yaw), np.sin(yaw), 0.0], dtype=np.float64)
 
     mujoco.mjv_initGeom(
@@ -444,7 +468,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--loop", action="store_true")
     p.add_argument("--quat-convention", choices=["xyzw", "wxyz"], default="xyzw")
     p.add_argument("--heading-overlay", action="store_true",
-                   help="Draw the raw PKL root heading as a blue arrow in the MuJoCo scene")
+                   help="Draw a blue heading arrow in the MuJoCo scene")
+    p.add_argument("--heading-overlay-mode", choices=["trajectory", "quat", "heading_key"], default="trajectory",
+                   help="trajectory uses root_pos movement direction; quat uses raw root quaternion yaw; heading_key uses root_heading_rot when available")
+    p.add_argument("--heading-smooth-frames", type=int, default=5,
+                   help="Frame radius for trajectory heading smoothing")
+    p.add_argument("--heading-min-step", type=float, default=1e-4,
+                   help="Minimum planar displacement for updating trajectory heading")
     p.add_argument("--heading-arrow-length", type=float, default=0.75,
                    help="Length of --heading-overlay arrow")
     p.add_argument("--heading-arrow-height", type=float, default=0.18,
@@ -525,7 +555,7 @@ def main() -> None:
         return
 
     pkl_path = Path(args.pkl).expanduser().resolve()
-    dof_pos, root_pos, root_rot, fps_from_file = _load_motion(pkl_path)
+    dof_pos, root_pos, root_rot, root_heading_rot, fps_from_file = _load_motion(pkl_path)
     original_n_frames = int(dof_pos.shape[0])
     if original_n_frames == 0:
         raise ValueError("Motion has zero frames")
@@ -538,6 +568,8 @@ def main() -> None:
     dof_pos = dof_pos[start_frame:end_frame]
     root_pos = root_pos[start_frame:end_frame]
     root_rot = root_rot[start_frame:end_frame]
+    if root_heading_rot is not None:
+        root_heading_rot = root_heading_rot[start_frame:end_frame]
     n_frames = int(dof_pos.shape[0])
 
     play_fps = float(args.fps) if args.fps is not None else float(fps_from_file if fps_from_file else 30.0)
@@ -549,8 +581,25 @@ def main() -> None:
     print(f"PKL: {pkl_path}")
     print(f"Frames: {n_frames} from range [{start_frame}, {end_frame}) of {original_n_frames}, playback_fps: {play_fps:.3f}")
     print(f"Joint dims: motion={n_motion_joints}, model_non_free={n_model_joints}, mapped={map_dim}")
+    heading_yaw = None
     if args.heading_overlay:
-        print("Heading overlay: ON (blue arrow = raw root quaternion yaw; press 'h' to toggle)")
+        if args.heading_overlay_mode == "trajectory":
+            heading_yaw = _compute_trajectory_heading(
+                root_pos,
+                smooth_frames=int(args.heading_smooth_frames),
+                min_step=float(args.heading_min_step),
+            )
+            print("Heading overlay: ON (blue arrow = root trajectory heading; press 'h' to toggle)")
+        elif args.heading_overlay_mode == "heading_key":
+            if root_heading_rot is None:
+                heading_yaw = np.asarray([_yaw_from_quat(q, args.quat_convention) for q in root_rot], dtype=np.float32)
+                print("Heading overlay: ON (root_heading_rot missing; blue arrow = raw root quaternion yaw fallback; press 'h' to toggle)")
+            else:
+                heading_yaw = np.asarray([_yaw_from_quat(q, args.quat_convention) for q in root_heading_rot], dtype=np.float32)
+                print("Heading overlay: ON (blue arrow = root_heading_rot yaw; press 'h' to toggle)")
+        else:
+            heading_yaw = np.asarray([_yaw_from_quat(q, args.quat_convention) for q in root_rot], dtype=np.float32)
+            print("Heading overlay: ON (blue arrow = raw root quaternion yaw; press 'h' to toggle)")
     if n_model_joints != n_motion_joints:
         print("[warn] Motion joint dim does not exactly match model non-free joints; using min(motion, model).")
 
@@ -590,7 +639,7 @@ def main() -> None:
             dst_fk_path = dst_robot_spec.fk_xml if dst_robot_spec.fk_xml.is_absolute() else (output_root / dst_robot_spec.fk_xml)
 
             src_pkl_path = Path(args.ee_source_pkl).expanduser().resolve()
-            src_dof_pos, src_root_pos, src_root_rot, src_fps_from_file = _load_motion(src_pkl_path)
+            src_dof_pos, src_root_pos, src_root_rot, _src_root_heading_rot, src_fps_from_file = _load_motion(src_pkl_path)
             src_end_frame = min(int(src_dof_pos.shape[0]), end_frame)
             src_start_frame = min(start_frame, src_end_frame)
             src_dof_pos = src_dof_pos[src_start_frame:src_end_frame]
@@ -710,11 +759,14 @@ def main() -> None:
             viewer.user_scn.ngeom = 0
 
             if show_heading_overlay[0]:
+                if heading_yaw is None:
+                    yaw_v = _yaw_from_quat(root_rot[frame[0]], args.quat_convention)
+                else:
+                    yaw_v = float(heading_yaw[min(frame[0], len(heading_yaw) - 1)])
                 _draw_heading_overlay(
                     viewer=viewer,
                     root_pos=root_pos[frame[0]],
-                    root_quat=root_rot[frame[0]],
-                    quat_convention=args.quat_convention,
+                    yaw=yaw_v,
                     length=float(args.heading_arrow_length),
                     height=float(args.heading_arrow_height),
                 )

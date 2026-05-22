@@ -516,7 +516,10 @@ class PAN_model(BaseModel):
         # rec_loss and gan loss
         self.rec_losses = []
         self.rec_loss = 0
-        self.cycle_loss = 0
+        self.cycle_loss = 0  # weighted sum kept for legacy logging
+        self.cycle_fk_loss = torch.tensor(0.0, device=self.device)
+        self.cycle_latent_loss = torch.tensor(0.0, device=self.device)
+        self.cycle_motion_loss = torch.tensor(0.0, device=self.device)
         self.loss_G = 0
         self.retar_loss = 0
         self.retar_ang_loss = torch.tensor(0.0, device=self.device)
@@ -587,15 +590,16 @@ class PAN_model(BaseModel):
                 if dst == src:
                     continue
                 else:
-                    # cycle consistency loss for joint positions and latent codes
-                    cycle_loss = self.criterion_cycle(self, src, p, indice=indices)
+                    # Cycle consistency terms are accumulated separately so latent
+                    # alignment cannot silently dominate FK or motion-cycle quality.
+                    cycle_fk_loss = self.criterion_cycle(self, src, p, indice=indices)
                     cycle_latent_loss = self.criterion_cycle_latent(self, src, p)
-                    self.loss_recoder.add_scalar('cycle_loss_{}_{}'.format(src, dst), cycle_loss)
+                    self.loss_recoder.add_scalar('cycle_fk_loss_{}_{}'.format(src, dst), cycle_fk_loss)
                     self.loss_recoder.add_scalar('cycle_latent_loss_{}_{}'.format(src, dst), cycle_latent_loss)
-                    self.cycle_loss += cycle_loss
-                    self.cycle_loss += cycle_latent_loss 
+                    self.cycle_fk_loss = self.cycle_fk_loss + cycle_fk_loss
+                    self.cycle_latent_loss = self.cycle_latent_loss + cycle_latent_loss
 
-                    # cycle consistency loss for motion features — commented out, use as ablation
+                    # Cycle consistency loss for denormalized motion features.
                     njoints_src = self.datasets[src].njoints
                     motion_denorm_src = self.motion_denorm[src]
                     cyc_denorm_curr   = self.cyc_denorm[p]
@@ -618,16 +622,10 @@ class PAN_model(BaseModel):
                     cycle_yaw_loss = self.mse(src_yaw, cyc_yaw)
                     self.loss_recoder.add_scalar('cycle_ang_loss_{}_{}'.format(src, dst), cycle_yaw_loss)
 
-                    # Combined: uncomment and tune weights as needed
-                    cycle_motion_loss = cycle_motion_loss1 # + cycle_motion_loss2 + cycle_yaw_loss
-                    if isinstance(self.args, dict):
-                        lambda_cycle_motion = float(self.args.get('lambda_cycle_motion', 1e2))
-                    else:
-                        try:
-                            lambda_cycle_motion = float(getattr(self.args, 'lambda_cycle_motion'))
-                        except (AttributeError, KeyError):
-                            lambda_cycle_motion = 0.0
-                    self.cycle_loss += cycle_motion_loss * lambda_cycle_motion
+                    # Keep the historical motion-cycle definition as joint angles only.
+                    # Velocity/angular cycle terms are logged above for ablations.
+                    cycle_motion_loss = cycle_motion_loss1
+                    self.cycle_motion_loss = self.cycle_motion_loss + cycle_motion_loss
 
                     # --- Retargeted root angular-rate transfer losses. ---
                     # These are intentionally outside lambda_retar_vel. Yaw is always
@@ -922,15 +920,35 @@ class PAN_model(BaseModel):
 
             self.loss_recoder.add_scalar('physics_loss_total', self.physics_loss)
 
+        def _arg_float(name, default):
+            if isinstance(self.args, dict):
+                return float(self.args.get(name, default))
+            return float(getattr(self.args, name, default))
+
+        legacy_cycle_weight = _arg_float('lambda_cycle', 1e-3)
+        lambda_cycle_fk = _arg_float('lambda_cycle_fk', -1.0)
+        lambda_cycle_latent = _arg_float('lambda_cycle_latent', -1.0)
+        lambda_cycle_motion = _arg_float('lambda_cycle_motion', 0.0)
+        if lambda_cycle_fk < 0.0:
+            lambda_cycle_fk = legacy_cycle_weight
+        if lambda_cycle_latent < 0.0:
+            lambda_cycle_latent = legacy_cycle_weight
+
+        self.cycle_loss = (
+            self.cycle_fk_loss * lambda_cycle_fk
+            + self.cycle_latent_loss * lambda_cycle_latent
+            + self.cycle_motion_loss * lambda_cycle_motion
+        )
+
         self.loss_G_total = self.rec_loss   * self.args.lambda_rec       + \
-                            self.cycle_loss * self.args.lambda_cycle     + \
+                            self.cycle_loss                              + \
                             self.loss_G     * 1                          + \
                             self.retar_loss * self.args.lambda_retar_vel + \
                             self.retar_ang_loss + \
                             self.ee_loss    * getattr(self.args, 'lambda_ee', 0.0) + \
                             self.kl_loss    * getattr(self.args, 'lambda_kl', 1e-3) + \
                             self.physics_loss
-        
+
         self.loss_recoder.add_scalar('kl_loss_total', self.kl_loss)
         self.loss_recoder.add_scalar('retargeting_ang_loss_total', self.retar_ang_loss)
         self.loss_recoder.add_scalar('ee_loss_total', self.ee_loss)
@@ -963,6 +981,9 @@ class PAN_model(BaseModel):
         res = {'rec_loss_0': self.rec_losses[0].item(),
                'rec_loss_1': self.rec_losses[1].item(),
                'cycle_loss': self.cycle_loss.item(),
+               'cycle_fk_loss': self.cycle_fk_loss.item(),
+               'cycle_latent_loss': self.cycle_latent_loss.item(),
+               'cycle_motion_loss': self.cycle_motion_loss.item(),
                'kl_loss':    kl_val,
                'ee_loss':    self.ee_loss.item(),
                'D_loss_gan': self.loss_D.item(),
@@ -980,6 +1001,9 @@ class PAN_model(BaseModel):
             'loss/rec_loss_topology_0': self.rec_losses[0].item(),
             'loss/rec_loss_topology_1': self.rec_losses[1].item(),
             'loss/cycle_loss': self.cycle_loss.item(),
+            'loss/cycle_fk_raw': self.cycle_fk_loss.item(),
+            'loss/cycle_latent_raw': self.cycle_latent_loss.item(),
+            'loss/cycle_motion_raw': self.cycle_motion_loss.item(),
             'loss/discriminator': self.loss_D.item(),
             'loss/generator': self.loss_G.item(),
             'loss/generator_total': self.loss_G_total.item(),

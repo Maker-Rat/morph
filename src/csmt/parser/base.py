@@ -86,10 +86,14 @@ def add_losses_options(parser):
                        help='Weight for KL divergence loss (VAE only)')
     
     group.add_argument('--lambda_rec', type=float, default=1)
-    group.add_argument('--lambda_cycle', type=float, default=1e-3)
+    group.add_argument('--lambda_cycle', type=float, default=1e-3,
+                       help='Legacy cycle weight. Used as fallback for lambda_cycle_fk and lambda_cycle_latent when they are < 0.')
+    group.add_argument('--lambda_cycle_fk', type=float, default=-1.0,
+                       help='Weight for FK/kinematic cycle consistency. <0 falls back to lambda_cycle.')
+    group.add_argument('--lambda_cycle_latent', type=float, default=-1.0,
+                       help='Weight for latent cycle consistency. <0 falls back to lambda_cycle.')
     group.add_argument('--lambda_cycle_motion', type=float, default=0.0,
-                       help='Additional weight for cycle motion reconstruction term '
-                            '(joint/vel/yaw feature-space cycle loss).')
+                       help='Weight for denormalized motion-cycle reconstruction term. This is independent of lambda_cycle.')
     group.add_argument('--lambda_retar_vel', type=float, default=1e3)
     group.add_argument('--lambda_ee', type=float, default=0.0,
                        help='Weight for end-effector matching loss on retargeted motion')

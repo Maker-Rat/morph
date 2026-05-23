@@ -40,7 +40,14 @@ class MotionStats:
         self.mean = torch.from_numpy(payload["mean"]).float()
         self.std = torch.from_numpy(payload["std"]).float()
         if njoints is None:
-            njoints = int(payload["n_joints"]) if "n_joints" in payload else int(self.mean.shape[0] - 4)
+            if "feature_n_joints" in payload.files:
+                njoints = int(np.asarray(payload["feature_n_joints"]).item())
+            elif "motion_dim" in payload.files and "root_ang_dim" in payload.files:
+                njoints = int(np.asarray(payload["motion_dim"]).item()) - 3 - int(np.asarray(payload["root_ang_dim"]).item())
+            elif "n_joints" in payload.files:
+                njoints = int(np.asarray(payload["n_joints"]).item())
+            else:
+                njoints = int(self.mean.shape[0] - 4)
         if nbodies is None:
             nbodies = int(payload["n_bodies"]) if "n_bodies" in payload else int(len(self.parents))
         self.njoints = int(njoints)
@@ -233,6 +240,20 @@ def _compute_yaw_rate(yaw: np.ndarray, dt: float) -> np.ndarray:
     return (diff / dt).astype(np.float32)
 
 
+def _compute_body_angular_vel(root_rot_xyzw: np.ndarray, dt: float) -> np.ndarray:
+    from scipy.spatial.transform import Rotation as R
+
+    quat = np.asarray(root_rot_xyzw, dtype=np.float32)
+    n_frames = int(quat.shape[0])
+    out = np.zeros((n_frames, 3), dtype=np.float32)
+    if n_frames <= 1:
+        return out
+    rot = R.from_quat(quat)
+    rel = rot[:-1].inv() * rot[1:]
+    out[1:] = (rel.as_rotvec() / float(dt)).astype(np.float32)
+    return out
+
+
 def _pkl_to_normalized_features(path: Path, stats: MotionStats, max_frames: int) -> tuple[np.ndarray, float]:
     joint_pos, root_pos, root_rot, heading_rot, fps = _extract_motion_arrays(_load_motion_pkl(path))
     n_frames = int(len(joint_pos)) if int(max_frames) <= 0 else min(int(len(joint_pos)), int(max_frames))
@@ -246,9 +267,7 @@ def _pkl_to_normalized_features(path: Path, stats: MotionStats, max_frames: int)
     yaw = _extract_yaw(heading_rot)
     lin_vel_local = _world_vel_to_local(_compute_world_linear_vel(root_pos, dt), yaw)
     if int(stats.root_ang_dim) == 3:
-        from scipy.spatial.transform import Rotation as R
-        rpy = R.from_quat(np.asarray(heading_rot, dtype=np.float32)).as_euler("xyz", degrees=False).astype(np.float32)
-        root_ang_rate = _compute_angle_rate(rpy, dt)
+        root_ang_rate = _compute_body_angular_vel(heading_rot, dt)
     else:
         root_ang_rate = _compute_yaw_rate(yaw, dt)[:, None]
     motion = np.concatenate([joint_pos, lin_vel_local, root_ang_rate], axis=-1).astype(np.float32)

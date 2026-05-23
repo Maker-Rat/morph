@@ -217,17 +217,64 @@ class ForwardKinematics(nn.Module):
             rotated = rotated.squeeze(1)
         
         return rotated
+
+    @staticmethod
+    def _quat_mul_xyzw(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+        ax, ay, az, aw = a.unbind(dim=-1)
+        bx, by, bz, bw = b.unbind(dim=-1)
+        return torch.stack(
+            [
+                aw * bx + ax * bw + ay * bz - az * by,
+                aw * by - ax * bz + ay * bw + az * bx,
+                aw * bz + ax * by - ay * bx + az * bw,
+                aw * bw - ax * bx - ay * by - az * bz,
+            ],
+            dim=-1,
+        )
+
+    @staticmethod
+    def _rotvec_to_quat_xyzw(rotvec: torch.Tensor) -> torch.Tensor:
+        angle = torch.linalg.norm(rotvec, dim=-1, keepdim=True)
+        half = 0.5 * angle
+        scale = torch.where(
+            angle > 1e-8,
+            torch.sin(half) / torch.clamp(angle, min=1e-8),
+            0.5 - (angle * angle) / 48.0,
+        )
+        quat = torch.cat([rotvec * scale, torch.cos(half)], dim=-1)
+        return quat / torch.clamp(torch.linalg.norm(quat, dim=-1, keepdim=True), min=1e-8)
+
+    def _integrate_root_quat(self, root_ang: torch.Tensor, dt: float) -> torch.Tensor:
+        """Integrate local/body angular velocity channels into XYZW root quaternions."""
+        batch_size, time_steps, dim = root_ang.shape
+        if dim < 3:
+            yaw = torch.cumsum(root_ang[..., -1] * dt, dim=1)
+            half = yaw * 0.5
+            zeros = torch.zeros_like(half)
+            return torch.stack([zeros, zeros, torch.sin(half), torch.cos(half)], dim=-1)
+
+        delta_quat = self._rotvec_to_quat_xyzw(root_ang[..., :3] * dt)
+        quat_steps = []
+        q = torch.zeros(batch_size, 4, dtype=root_ang.dtype, device=root_ang.device)
+        q[:, 3] = 1.0
+        for t in range(time_steps):
+            q = self._quat_mul_xyzw(q, delta_quat[:, t])
+            q = q / torch.clamp(torch.linalg.norm(q, dim=-1, keepdim=True), min=1e-8)
+            quat_steps.append(q)
+        return torch.stack(quat_steps, dim=1)
     
     def forward(self, motion_data: torch.Tensor,
                 dt: float = 1.0/30.0) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         """
         Compute forward kinematics for batched motion data.
 
-        Feature vector: [joint_angles | lin_vel_local (3) | angular rates (yaw or rpy; yaw is last)]
+        Feature vector: [joint_angles | lin_vel_local (3) | angular rates].
+        Legacy one-channel angular features are yaw_rate. Three-channel angular
+        features are local/body angular velocity [wx, wy, wz].
 
         Global positions are computed by:
           1. Running FK in the robot local frame (joint angles only)
-          2. Rotating local positions by the integrated yaw
+          2. Rotating local positions by integrated root orientation
           3. Translating by the integrated world position
 
         Args:
@@ -244,7 +291,7 @@ class ForwardKinematics(nn.Module):
 
         joint_angles  = motion_data[..., :self.n_joints]         # [B, T, n_joints]
         lin_vel_local = motion_data[..., self.n_joints:self.n_joints+3]  # [B, T, 3]
-        yaw_rate      = motion_data[..., -1]                      # [B, T], yaw is always last angular channel
+        root_ang = motion_data[..., self.n_joints + 3:]           # [B, T, root_ang_dim]
 
         # ── 1. FK in local frame ───────────────────────────────────────────
         joint_angles_flat = joint_angles.reshape(-1, self.n_joints)
@@ -263,18 +310,17 @@ class ForwardKinematics(nn.Module):
         n_bodies = len(local_positions_list)
         local_pos = local_pos_flat.reshape(batch_size, time_steps, n_bodies, 3)
 
-        # ── 2. Integrate yaw_rate → yaw angle ─────────────────────────────
-        yaw = torch.cumsum(yaw_rate * dt, dim=1)  # [B, T]
-
-        # Build yaw rotation quaternion: [0, 0, sin(yaw/2), cos(yaw/2)]  (XYZW)
-        half = yaw * 0.5
-        zeros = torch.zeros_like(half)
-        yaw_quat = torch.stack([zeros, zeros, torch.sin(half), torch.cos(half)], dim=-1)  # [B, T, 4]
+        # ── 2. Integrate root angular velocity → root quaternion ──────────
+        root_quat = self._integrate_root_quat(root_ang, dt)  # [B, T, 4], XYZW
+        yaw = torch.atan2(
+            2.0 * (root_quat[..., 3] * root_quat[..., 2] + root_quat[..., 0] * root_quat[..., 1]),
+            1.0 - 2.0 * (root_quat[..., 1] * root_quat[..., 1] + root_quat[..., 2] * root_quat[..., 2]),
+        )
 
         # ── 3. Rotate local → world ────────────────────────────────────────
         world_pos_rotated = self._rotate_by_quaternion(
             local_pos.reshape(-1, n_bodies, 3),
-            yaw_quat.reshape(-1, 4)
+            root_quat.reshape(-1, 4)
         ).reshape(batch_size, time_steps, n_bodies, 3)
 
         # Base-link-relative positions (true base-relative coordinates).
@@ -329,14 +375,8 @@ class ForwardKinematics(nn.Module):
 
         batch_size, time_steps, _ = motion_data.shape
         joint_angles = motion_data[..., :self.n_joints]      # [B, T, n_joints]
-        yaw_rate = motion_data[..., -1]                      # [B, T], yaw is always last angular channel
-        yaw = torch.cumsum(yaw_rate * dt, dim=1)             # [B, T]
-
-        half = yaw * 0.5
-        yaw_quat = torch.stack(
-            [torch.zeros_like(half), torch.zeros_like(half), torch.sin(half), torch.cos(half)],
-            dim=-1
-        )  # [B, T, 4] in XYZW
+        root_ang = motion_data[..., self.n_joints + 3:]
+        root_quat = self._integrate_root_quat(root_ang, dt)  # [B, T, 4], XYZW
 
         joint_angles_flat = joint_angles.reshape(-1, self.n_joints)  # [B*T, n_joints]
         fk_result = self.chain.forward_kinematics(
@@ -348,7 +388,7 @@ class ForwardKinematics(nn.Module):
         base_local = base_tf[:, :, 3].reshape(batch_size, time_steps, 1, 3)  # [B, T, 1, 3]
         base_world_rot = self._rotate_by_quaternion(
             base_local.reshape(-1, 1, 3),
-            yaw_quat.reshape(-1, 4),
+            root_quat.reshape(-1, 4),
         ).reshape(batch_size, time_steps, 1, 3)  # [B, T, 1, 3]
 
         ee_local_points = []
@@ -368,7 +408,7 @@ class ForwardKinematics(nn.Module):
             ee_local_points.append(pos)
 
         ee_local_points = torch.stack(ee_local_points, dim=1)  # [B*T, K, 3]
-        ee_world_rot = self._rotate_by_quaternion(ee_local_points, yaw_quat.reshape(-1, 4))
+        ee_world_rot = self._rotate_by_quaternion(ee_local_points, root_quat.reshape(-1, 4))
         ee_world_rot = ee_world_rot.reshape(batch_size, time_steps, len(link_indices), 3)
 
         return ee_world_rot - base_world_rot

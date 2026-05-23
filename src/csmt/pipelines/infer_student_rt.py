@@ -26,8 +26,12 @@ class InferenceStats:
         self.std = torch.from_numpy(payload["std"]).float()
 
         if njoints is None:
-            if "n_joints" in payload:
-                njoints = int(payload["n_joints"])
+            if "feature_n_joints" in payload.files:
+                njoints = int(np.asarray(payload["feature_n_joints"]).item())
+            elif "motion_dim" in payload.files and "root_ang_dim" in payload.files:
+                njoints = int(np.asarray(payload["motion_dim"]).item()) - 3 - int(np.asarray(payload["root_ang_dim"]).item())
+            elif "n_joints" in payload.files:
+                njoints = int(np.asarray(payload["n_joints"]).item())
             else:
                 njoints = int(self.mean.shape[0] - 4)
         if nbodies is None:
@@ -140,6 +144,39 @@ def _compute_yaw_rate(yaw: np.ndarray, dt: float) -> np.ndarray:
     return _compute_angle_rate(yaw[:, None], dt)[:, 0]
 
 
+def _compute_body_angular_vel(root_rot_xyzw: np.ndarray, dt: float) -> np.ndarray:
+    from scipy.spatial.transform import Rotation as R
+
+    quat = np.asarray(root_rot_xyzw, dtype=np.float32)
+    n_frames = int(quat.shape[0])
+    out = np.zeros((n_frames, 3), dtype=np.float32)
+    if n_frames <= 1:
+        return out
+    rot = R.from_quat(quat)
+    rel = rot[:-1].inv() * rot[1:]
+    out[1:] = (rel.as_rotvec() / float(dt)).astype(np.float32)
+    return out
+
+
+def _integrate_body_ang_vel_xyzw(body_ang_vel: np.ndarray, dt: float) -> np.ndarray:
+    from scipy.spatial.transform import Rotation as R
+
+    omega = np.asarray(body_ang_vel, dtype=np.float64)
+    t_len = int(omega.shape[0])
+    out = np.zeros((t_len, 4), dtype=np.float32)
+    q = R.identity()
+    for i in range(t_len):
+        q = q * R.from_rotvec(omega[i] * float(dt))
+        out[i] = q.as_quat().astype(np.float32)
+    return out
+
+
+def _yaw_from_body_ang_vel(body_ang_vel: np.ndarray, dt: float, yaw_offset: float = 0.0) -> np.ndarray:
+    quat = _integrate_body_ang_vel_xyzw(body_ang_vel, dt)
+    yaw = _extract_yaw(quat).astype(np.float32)
+    return yaw + float(yaw_offset)
+
+
 def _prepare_src_input(
     motion_pkl,
     src_stats: InferenceStats,
@@ -159,9 +196,7 @@ def _prepare_src_input(
     lin_vel_world = _compute_world_linear_vel(base_trans, dt)
     lin_vel_local = _world_vel_to_local(lin_vel_world, yaw)
     if int(src_stats.root_ang_dim) == 3:
-        from scipy.spatial.transform import Rotation as R
-        rpy = R.from_quat(np.asarray(heading_rot, dtype=np.float32)).as_euler("xyz", degrees=False).astype(np.float32)
-        root_ang_rate = _compute_angle_rate(rpy, dt)
+        root_ang_rate = _compute_body_angular_vel(heading_rot, dt)
     else:
         root_ang_rate = _compute_yaw_rate(yaw, dt)[:, None]
 
@@ -178,9 +213,13 @@ def _motion_to_pkl(motion_denorm: np.ndarray, dst_stats: InferenceStats, yaw_ini
 
     joint_pos = motion_denorm[:, :nj]
     lin_vel_local = motion_denorm[:, nj:nj + 3]
-    yaw_rate = motion_denorm[:, nj + 3 + dst_stats.root_ang_dim - 1]
+    root_ang = motion_denorm[:, nj + 3:nj + 3 + int(dst_stats.root_ang_dim)]
 
-    yaw = yaw_init + np.cumsum(yaw_rate * dt)
+    if int(dst_stats.root_ang_dim) >= 3:
+        yaw = _yaw_from_body_ang_vel(root_ang[:, :3], dt, yaw_offset=yaw_init)
+    else:
+        yaw_rate = root_ang[:, -1]
+        yaw = yaw_init + np.cumsum(yaw_rate * dt)
     cos_yaw = np.cos(yaw)
     sin_yaw = np.sin(yaw)
 
@@ -195,16 +234,19 @@ def _motion_to_pkl(motion_denorm: np.ndarray, dst_stats: InferenceStats, yaw_ini
         base_trans[i, 1] = base_trans[i - 1, 1] + world_vy[i] * dt
         base_trans[i, 2] = base_trans[i - 1, 2] + world_vz[i] * dt
 
-    half_yaw = yaw * 0.5
-    base_quat = np.stack(
-        [
-            np.zeros(t_len, dtype=np.float32),
-            np.zeros(t_len, dtype=np.float32),
-            np.sin(half_yaw).astype(np.float32),
-            np.cos(half_yaw).astype(np.float32),
-        ],
-        axis=-1,
-    )
+    if int(dst_stats.root_ang_dim) >= 3:
+        base_quat = _integrate_body_ang_vel_xyzw(root_ang[:, :3], dt)
+    else:
+        half_yaw = yaw * 0.5
+        base_quat = np.stack(
+            [
+                np.zeros(t_len, dtype=np.float32),
+                np.zeros(t_len, dtype=np.float32),
+                np.sin(half_yaw).astype(np.float32),
+                np.cos(half_yaw).astype(np.float32),
+            ],
+            axis=-1,
+        )
 
     return {
         "fps": float(fps),

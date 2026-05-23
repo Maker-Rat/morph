@@ -15,7 +15,8 @@ quat_loss_type: geodesic
 retar_vel_matching: direct
 rec_loss_type: norm_rec
 
-# Root angular feature layout is inferred from processed stats; yaw is legacy.
+# Root angular feature layout is inferred from processed stats; yaw is legacy,
+# rpy stores local/body angular velocity [wx, wy, wz].
 root_ang_features: yaw
 root_ang_dim: 1
 lambda_retar_roll_rate: 0.0

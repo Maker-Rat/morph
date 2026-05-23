@@ -220,8 +220,42 @@ def _features_to_trajectory(motion_denorm: torch.Tensor, njoints: int, dt: float
     """Convert [q, local lin vel xyz, angular rates] to [q, root pos xyz, yaw]."""
     q = motion_denorm[..., :njoints]
     lin_vel_local = motion_denorm[..., njoints:njoints + 3]
-    yaw_rate = motion_denorm[..., -1]
-    yaw = torch.cumsum(yaw_rate * dt, dim=1)
+    root_ang = motion_denorm[..., njoints + 3:]
+    if int(root_ang.shape[-1]) >= 3:
+        rotvec = root_ang[..., :3] * float(dt)
+        angle = torch.linalg.norm(rotvec, dim=-1, keepdim=True)
+        half = 0.5 * angle
+        scale = torch.where(
+            angle > 1e-8,
+            torch.sin(half) / torch.clamp(angle, min=1e-8),
+            0.5 - (angle * angle) / 48.0,
+        )
+        delta = torch.cat([rotvec * scale, torch.cos(half)], dim=-1)
+        quat_steps = []
+        cur = torch.zeros(root_ang.shape[0], 4, dtype=root_ang.dtype, device=root_ang.device)
+        cur[:, 3] = 1.0
+        for t in range(root_ang.shape[1]):
+            ax, ay, az, aw = cur.unbind(dim=-1)
+            bx, by, bz, bw = delta[:, t].unbind(dim=-1)
+            cur = torch.stack(
+                [
+                    aw * bx + ax * bw + ay * bz - az * by,
+                    aw * by - ax * bz + ay * bw + az * bx,
+                    aw * bz + ax * by - ay * bx + az * bw,
+                    aw * bw - ax * bx - ay * by - az * bz,
+                ],
+                dim=-1,
+            )
+            cur = cur / torch.clamp(torch.linalg.norm(cur, dim=-1, keepdim=True), min=1e-8)
+            quat_steps.append(cur)
+        root_quat = torch.stack(quat_steps, dim=1)
+        yaw = torch.atan2(
+            2.0 * (root_quat[..., 3] * root_quat[..., 2] + root_quat[..., 0] * root_quat[..., 1]),
+            1.0 - 2.0 * (root_quat[..., 1] * root_quat[..., 1] + root_quat[..., 2] * root_quat[..., 2]),
+        )
+    else:
+        yaw_rate = root_ang[..., -1]
+        yaw = torch.cumsum(yaw_rate * dt, dim=1)
 
     cos_yaw = torch.cos(yaw)
     sin_yaw = torch.sin(yaw)

@@ -29,13 +29,13 @@ correct_root_yaw: true
 train_seq_len: 0
 eval_seq_len: 0
 
-lambda_preserve_joints: 2.5
+lambda_preserve_joints: 10.0
 # Preserve teacher root local velocity/yaw-rate target from original teacher features.
 # Split so XY locomotion and vertical motion can be tuned independently.
-lambda_preserve_root_vel_xy: 0.25
-lambda_preserve_root_vel_z: 1.5
+lambda_preserve_root_vel_xy: 0.1
+lambda_preserve_root_vel_z: 0.75
 lambda_preserve_root_yaw_rate: 0.5
-lambda_smooth: 0.0
+lambda_smooth: 0.5
 lambda_skating: 2.5
 lambda_grounding: 25.0
 lambda_joint_limits: 0.01

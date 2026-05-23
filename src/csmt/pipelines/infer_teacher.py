@@ -32,8 +32,12 @@ class InferenceStats:
         self.std = torch.from_numpy(payload["std"]).float()
 
         if njoints is None:
-            if "n_joints" in payload:
-                njoints = int(payload["n_joints"])
+            if "feature_n_joints" in payload.files:
+                njoints = int(np.asarray(payload["feature_n_joints"]).item())
+            elif "motion_dim" in payload.files and "root_ang_dim" in payload.files:
+                njoints = int(np.asarray(payload["motion_dim"]).item()) - 3 - int(np.asarray(payload["root_ang_dim"]).item())
+            elif "n_joints" in payload.files:
+                njoints = int(np.asarray(payload["n_joints"]).item())
             else:
                 njoints = int(self.mean.shape[0] - 4)
         if nbodies is None:
@@ -220,11 +224,23 @@ def _compute_angle_rate(angles: np.ndarray, dt: float) -> np.ndarray:
     return (diff / dt).astype(np.float32)
 
 
+def _compute_body_angular_vel(root_rot_xyzw: np.ndarray, dt: float) -> np.ndarray:
+    from scipy.spatial.transform import Rotation as R
+
+    quat = np.asarray(root_rot_xyzw, dtype=np.float32)
+    n_frames = int(quat.shape[0])
+    out = np.zeros((n_frames, 3), dtype=np.float32)
+    if n_frames <= 1:
+        return out
+    rot = R.from_quat(quat)
+    rel = rot[:-1].inv() * rot[1:]
+    out[1:] = (rel.as_rotvec() / float(dt)).astype(np.float32)
+    return out
+
+
 def _compute_root_ang_rate(root_rot_xyzw: np.ndarray, yaw: np.ndarray, root_ang_dim: int) -> np.ndarray:
     if int(root_ang_dim) == 3:
-        from scipy.spatial.transform import Rotation as R
-        rpy = R.from_quat(np.asarray(root_rot_xyzw, dtype=np.float32)).as_euler("xyz", degrees=False).astype(np.float32)
-        return _compute_angle_rate(rpy, 1.0)  # caller rescales below
+        return _compute_body_angular_vel(root_rot_xyzw, 1.0)  # caller rescales below
     return _compute_angle_rate(yaw[:, None], 1.0)
 
 
@@ -250,9 +266,7 @@ def _prepare_src_input(
     lin_vel_world = _compute_world_linear_vel(base_trans, dt)
     lin_vel_local = _world_vel_to_local(lin_vel_world, yaw)
     if int(src_stats.root_ang_dim) == 3:
-        from scipy.spatial.transform import Rotation as R
-        rpy = R.from_quat(np.asarray(heading_rot, dtype=np.float32)).as_euler("xyz", degrees=False).astype(np.float32)
-        root_ang_rate = _compute_angle_rate(rpy, dt)
+        root_ang_rate = _compute_body_angular_vel(heading_rot, dt)
     else:
         root_ang_rate = _compute_yaw_rate(yaw, dt)[:, None]
 
@@ -263,16 +277,46 @@ def _prepare_src_input(
     return motion_t.unsqueeze(0).to(device), float(yaw[0]), float(fps), float(base_trans[0, 2])
 
 
-def _motion_to_pkl(motion_denorm: np.ndarray, dst_stats: InferenceStats, yaw_init: float, fps: float, start_height: float):
+def _integrate_body_ang_vel_xyzw(body_ang_vel: np.ndarray, dt: float) -> np.ndarray:
+    from scipy.spatial.transform import Rotation as R
+
+    omega = np.asarray(body_ang_vel, dtype=np.float64)
+    t_len = int(omega.shape[0])
+    out = np.zeros((t_len, 4), dtype=np.float32)
+    q = R.identity()
+    for i in range(t_len):
+        q = q * R.from_rotvec(omega[i] * float(dt))
+        out[i] = q.as_quat().astype(np.float32)
+    return out
+
+
+def _yaw_from_body_ang_vel(body_ang_vel: np.ndarray, dt: float, yaw_offset: float = 0.0) -> np.ndarray:
+    quat = _integrate_body_ang_vel_xyzw(body_ang_vel, dt)
+    yaw = _extract_yaw(quat).astype(np.float32)
+    return yaw + float(yaw_offset)
+
+
+def _motion_to_pkl(
+    motion_denorm: np.ndarray,
+    dst_stats: InferenceStats,
+    yaw_init: float,
+    fps: float,
+    start_height: float,
+    root_rotation_mode: str = "yaw",
+):
     t_len = int(motion_denorm.shape[0])
     nj = int(dst_stats.njoints)
     dt = 1.0 / float(fps)
 
     joint_pos = motion_denorm[:, :nj]
     lin_vel_local = motion_denorm[:, nj:nj + 3]
-    yaw_rate = motion_denorm[:, nj + 3 + dst_stats.root_ang_dim - 1]
+    root_ang = motion_denorm[:, nj + 3:nj + 3 + int(dst_stats.root_ang_dim)]
+    yaw_rate = root_ang[:, -1]
 
-    yaw = yaw_init + np.cumsum(yaw_rate * dt)
+    if int(dst_stats.root_ang_dim) >= 3:
+        yaw = _yaw_from_body_ang_vel(root_ang[:, :3], dt, yaw_offset=yaw_init)
+    else:
+        yaw = yaw_init + np.cumsum(yaw_rate * dt)
     cos_yaw = np.cos(yaw)
     sin_yaw = np.sin(yaw)
 
@@ -287,16 +331,20 @@ def _motion_to_pkl(motion_denorm: np.ndarray, dst_stats: InferenceStats, yaw_ini
         base_trans[i, 1] = base_trans[i - 1, 1] + world_vy[i] * dt
         base_trans[i, 2] = base_trans[i - 1, 2] + world_vz[i] * dt
 
-    half_yaw = yaw * 0.5
-    base_quat = np.stack(
-        [
-            np.zeros(t_len, dtype=np.float32),
-            np.zeros(t_len, dtype=np.float32),
-            np.sin(half_yaw).astype(np.float32),
-            np.cos(half_yaw).astype(np.float32),
-        ],
-        axis=-1,
-    )
+    mode = str(root_rotation_mode).lower()
+    if mode == "rpy" and int(dst_stats.root_ang_dim) >= 3:
+        base_quat = _integrate_body_ang_vel_xyzw(root_ang[:, :3], dt)
+    else:
+        half_yaw = yaw * 0.5
+        base_quat = np.stack(
+            [
+                np.zeros(t_len, dtype=np.float32),
+                np.zeros(t_len, dtype=np.float32),
+                np.sin(half_yaw).astype(np.float32),
+                np.cos(half_yaw).astype(np.float32),
+            ],
+            axis=-1,
+        )
 
     return {
         "fps": float(fps),
@@ -312,8 +360,43 @@ def _features_to_trajectory(motion_denorm: torch.Tensor, njoints: int, yaw_offse
     """Convert [q, local lin vel xyz, angular rates] to [q, root pos xyz, yaw]."""
     q = motion_denorm[..., :njoints]
     lin_vel_local = motion_denorm[..., njoints:njoints + 3]
-    yaw_rate = motion_denorm[..., -1]
-    yaw = float(yaw_offset) + torch.cumsum(yaw_rate * dt, dim=1)
+    root_ang = motion_denorm[..., njoints + 3:]
+    if int(root_ang.shape[-1]) >= 3:
+        rotvec = root_ang[..., :3] * float(dt)
+        angle = torch.linalg.norm(rotvec, dim=-1, keepdim=True)
+        half = 0.5 * angle
+        scale = torch.where(
+            angle > 1e-8,
+            torch.sin(half) / torch.clamp(angle, min=1e-8),
+            0.5 - (angle * angle) / 48.0,
+        )
+        delta = torch.cat([rotvec * scale, torch.cos(half)], dim=-1)
+        quat_steps = []
+        cur = torch.zeros(root_ang.shape[0], 4, dtype=root_ang.dtype, device=root_ang.device)
+        cur[:, 3] = 1.0
+        for t in range(root_ang.shape[1]):
+            ax, ay, az, aw = cur.unbind(dim=-1)
+            bx, by, bz, bw = delta[:, t].unbind(dim=-1)
+            cur = torch.stack(
+                [
+                    aw * bx + ax * bw + ay * bz - az * by,
+                    aw * by - ax * bz + ay * bw + az * bx,
+                    aw * bz + ax * by - ay * bx + az * bw,
+                    aw * bw - ax * bx - ay * by - az * bz,
+                ],
+                dim=-1,
+            )
+            cur = cur / torch.clamp(torch.linalg.norm(cur, dim=-1, keepdim=True), min=1e-8)
+            quat_steps.append(cur)
+        root_quat = torch.stack(quat_steps, dim=1)
+        yaw = torch.atan2(
+            2.0 * (root_quat[..., 3] * root_quat[..., 2] + root_quat[..., 0] * root_quat[..., 1]),
+            1.0 - 2.0 * (root_quat[..., 1] * root_quat[..., 1] + root_quat[..., 2] * root_quat[..., 2]),
+        )
+        yaw = yaw + float(yaw_offset)
+    else:
+        yaw_rate = root_ang[..., -1]
+        yaw = float(yaw_offset) + torch.cumsum(yaw_rate * dt, dim=1)
     cos_yaw = torch.cos(yaw)
     sin_yaw = torch.sin(yaw)
     world_vx = cos_yaw * lin_vel_local[..., 0] - sin_yaw * lin_vel_local[..., 1]
@@ -552,8 +635,12 @@ def _apply_stance_root_velocity_compensation(
         stance_ratio = np.convolve(stance_ratio, kernel, mode="same")
 
     lin_vel_local = m[:, dst_njoints:dst_njoints + 3]
-    yaw_rate = m[:, -1]
-    yaw = float(yaw_init) + np.cumsum(yaw_rate * dt)
+    root_ang = m[:, dst_njoints + 3:]
+    if root_ang.shape[-1] >= 3:
+        yaw = _yaw_from_body_ang_vel(root_ang[:, :3], dt, yaw_offset=yaw_init)
+    else:
+        yaw_rate = m[:, -1]
+        yaw = float(yaw_init) + np.cumsum(yaw_rate * dt)
     cos_yaw = np.cos(yaw)
     sin_yaw = np.sin(yaw)
 
@@ -672,6 +759,16 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=0.28,
         help="Output topology start height (meters) for root trajectory integration.",
+    )
+    p.add_argument(
+        "--root-rotation-mode",
+        choices=["yaw", "rpy"],
+        default="yaw",
+        help=(
+            "How to write output root_rot quaternions from motion features. "
+            "yaw keeps legacy yaw-only quats; rpy integrates body angular velocity channels when available. "
+            "Translation integration still uses yaw."
+        ),
     )
     p.add_argument(
         "--apply-root-skate-comp",
@@ -965,6 +1062,7 @@ def main() -> None:
                 yaw_init=float(yaw_init),
                 fps=float(fps),
                 start_height=dst_start_height_used,
+                root_rotation_mode=str(cli.root_rotation_mode),
             )
         _save_motion_pkl(output_pkl, output_payload)
 
@@ -1129,6 +1227,7 @@ def main() -> None:
                 yaw_init=float(yaw_init),
                 fps=float(fps),
                 start_height=float(src_start_height),
+                root_rotation_mode=str(cli.root_rotation_mode),
             )
             src_cyc_pkl = _motion_to_pkl(
                 motion_denorm=cyc_denorm,
@@ -1136,6 +1235,7 @@ def main() -> None:
                 yaw_init=float(yaw_init),
                 fps=float(fps),
                 start_height=float(src_start_height),
+                root_rotation_mode=str(cli.root_rotation_mode),
             )
             _save_motion_pkl(src_rec_path, src_rec_pkl)
             _save_motion_pkl(src_cyc_path, src_cyc_pkl)
@@ -1160,6 +1260,7 @@ def main() -> None:
         print(f"  dst start height used: {dst_start_height_used:.6f}")
         print(f"  frames: {t_len}")
         print(f"  dims: src={src_stats_active.motion_dim} dst={dst_stats_active.motion_dim} root_ang={dst_stats_active.root_ang_features}")
+        print(f"  root_rotation_mode: {cli.root_rotation_mode}")
         if cli.apply_root_skate_comp:
             print(f"  root_skate_comp: {json.dumps(skate_comp_dbg)}")
 

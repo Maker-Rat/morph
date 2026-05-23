@@ -88,12 +88,19 @@ def compute_angle_rate(angles: np.ndarray, dt: float) -> np.ndarray:
     return (diff / dt).astype(np.float32)
 
 
-def compute_rpy_xyz(base_rot_xyzw: np.ndarray) -> np.ndarray:
-    # Local import keeps scipy optional for tooling that only inspects the module.
+def compute_body_angular_vel(base_rot_xyzw: np.ndarray, dt: float) -> np.ndarray:
+    """Compute local/body angular velocity [wx, wy, wz] from XYZW root quaternions."""
     from scipy.spatial.transform import Rotation as R
 
     quat = np.asarray(base_rot_xyzw, dtype=np.float32)
-    return R.from_quat(quat).as_euler("xyz", degrees=False).astype(np.float32)
+    n_frames = int(quat.shape[0])
+    out = np.zeros((n_frames, 3), dtype=np.float32)
+    if n_frames <= 1:
+        return out
+    rot = R.from_quat(quat)
+    rel = rot[:-1].inv() * rot[1:]
+    out[1:] = (rel.as_rotvec() / float(dt)).astype(np.float32)
+    return out
 
 
 def compute_root_features(
@@ -108,7 +115,7 @@ def compute_root_features(
 
     mode = str(root_ang_features).lower()
     if mode == "rpy":
-        root_ang_rate = compute_angle_rate(compute_rpy_xyz(base_rot), dt)
+        root_ang_rate = compute_body_angular_vel(base_rot, dt)
     elif mode == "yaw":
         root_ang_rate = compute_angle_rate(yaw[:, None], dt)
     else:
@@ -695,7 +702,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--dt-default", type=float, default=1.0 / 30.0)
     p.add_argument("--root-ang-features", choices=["yaw", "rpy"], default="yaw",
-                   help="Root angular motion features: yaw keeps legacy [yaw_rate], rpy stores [roll_rate,pitch_rate,yaw_rate].")
+                   help="Root angular motion features: yaw keeps legacy [yaw_rate], rpy stores body angular velocity [wx,wy,wz].")
 
     p.add_argument("--handle-jumps", action="store_true", default=True)
     p.add_argument("--no-handle-jumps", dest="handle_jumps", action="store_false")

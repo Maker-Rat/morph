@@ -13,7 +13,7 @@ batch_size: 256
 epochs: 50
 balanced_sampling: true
 samples_per_epoch: 0
-lambda_imitation: 0.75
+lambda_imitation: 1.0
 lambda_smooth: 0.25
 lambda_src_motion: 1.0
 root_motion_target_mode: teacher

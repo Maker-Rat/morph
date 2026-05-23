@@ -545,7 +545,7 @@ class PAN_model(BaseModel):
             njoints = self.datasets[i].njoints
 
             # rec_loss_ang: explicit root angular-rate reconstruction loss.
-            # Legacy datasets have [yaw_rate]; rpy datasets have [roll_rate, pitch_rate, yaw_rate].
+            # Legacy datasets have [yaw_rate]; rpy datasets have local/body angular velocity [wx, wy, wz].
             motion_denorm = self.motion_denorm[i]
             rec_denorm    = self.rec_denorm[i]
             ang_input = motion_denorm[:, :, njoints+3:]

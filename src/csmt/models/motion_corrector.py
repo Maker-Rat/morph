@@ -33,7 +33,8 @@ class MotionCorrector(nn.Module):
     Residual temporal corrector.
 
     Input/Output both in denormalized trajectory space:
-      [joint_angles (J) | root_pos_xyz (3) | yaw (1)].
+      [joint_angles (J) | root_pos_xyz (3) | yaw (1)] for yaw-only datasets, or
+      [joint_angles (J) | root_pos_xyz (3) | roll_pitch_yaw (3)] for rpy datasets.
     """
     def __init__(
         self,
@@ -46,6 +47,7 @@ class MotionCorrector(nn.Module):
         joint_delta_max: float = 0.35,
         linvel_delta_max: float = 0.30,
         yaw_delta_max: float = 0.80,
+        root_rot_delta_max: float | None = None,
     ):
         super().__init__()
         self.motion_dim = int(motion_dim)
@@ -74,7 +76,8 @@ class MotionCorrector(nn.Module):
         if self.motion_dim >= self.joint_dim + 3:
             scale[self.joint_dim:self.joint_dim + 3] = float(linvel_delta_max)
         if self.motion_dim >= self.joint_dim + 4:
-            scale[self.joint_dim + 3] = float(yaw_delta_max)
+            rot_delta_max = float(yaw_delta_max if root_rot_delta_max is None else root_rot_delta_max)
+            scale[self.joint_dim + 3:] = rot_delta_max
         self.register_buffer("delta_scale", scale)
 
     def _bounded_delta(self, raw_delta: torch.Tensor) -> torch.Tensor:
@@ -89,4 +92,3 @@ class MotionCorrector(nn.Module):
         delta = self._bounded_delta(raw_delta)
         corrected = motion_denorm + delta
         return corrected, delta
-

@@ -313,7 +313,8 @@ def _motion_to_pkl(
     root_ang = motion_denorm[:, nj + 3:nj + 3 + int(dst_stats.root_ang_dim)]
     yaw_rate = root_ang[:, -1]
 
-    if int(dst_stats.root_ang_dim) >= 3:
+    mode = str(root_rotation_mode).lower()
+    if mode == "rpy" and int(dst_stats.root_ang_dim) >= 3:
         yaw = _yaw_from_body_ang_vel(root_ang[:, :3], dt, yaw_offset=yaw_init)
     else:
         yaw = yaw_init + np.cumsum(yaw_rate * dt)
@@ -331,7 +332,6 @@ def _motion_to_pkl(
         base_trans[i, 1] = base_trans[i - 1, 1] + world_vy[i] * dt
         base_trans[i, 2] = base_trans[i - 1, 2] + world_vz[i] * dt
 
-    mode = str(root_rotation_mode).lower()
     if mode == "rpy" and int(dst_stats.root_ang_dim) >= 3:
         base_quat = _integrate_body_ang_vel_xyzw(root_ang[:, :3], dt)
     else:
@@ -356,54 +356,119 @@ def _motion_to_pkl(
     }
 
 
+def _quat_mul_xyzw(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    ax, ay, az, aw = a.unbind(dim=-1)
+    bx, by, bz, bw = b.unbind(dim=-1)
+    return torch.stack(
+        [
+            aw * bx + ax * bw + ay * bz - az * by,
+            aw * by - ax * bz + ay * bw + az * bx,
+            aw * bz + ax * by - ay * bx + az * bw,
+            aw * bw - ax * bx - ay * by - az * bz,
+        ],
+        dim=-1,
+    )
+
+
+def _quat_conj_xyzw(q: torch.Tensor) -> torch.Tensor:
+    return torch.cat([-q[..., :3], q[..., 3:4]], dim=-1)
+
+
+def _quat_from_rotvec_xyzw(rotvec: torch.Tensor) -> torch.Tensor:
+    angle = torch.linalg.norm(rotvec, dim=-1, keepdim=True)
+    half = 0.5 * angle
+    scale = torch.where(
+        angle > 1e-8,
+        torch.sin(half) / torch.clamp(angle, min=1e-8),
+        0.5 - (angle * angle) / 48.0,
+    )
+    return torch.cat([rotvec * scale, torch.cos(half)], dim=-1)
+
+
+def _quat_to_rpy_xyzw(q: torch.Tensor) -> torch.Tensor:
+    x, y, z, w = q.unbind(dim=-1)
+    roll = torch.atan2(2.0 * (w * x + y * z), 1.0 - 2.0 * (x * x + y * y))
+    sinp = 2.0 * (w * y - z * x)
+    pitch = torch.asin(torch.clamp(sinp, -1.0, 1.0))
+    yaw = torch.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+    return torch.stack([roll, pitch, yaw], dim=-1)
+
+
+def _quat_from_rpy_xyzw_torch(rpy: torch.Tensor) -> torch.Tensor:
+    roll = rpy[..., 0]
+    pitch = rpy[..., 1]
+    yaw = rpy[..., 2]
+    cr = torch.cos(roll * 0.5)
+    sr = torch.sin(roll * 0.5)
+    cp = torch.cos(pitch * 0.5)
+    sp = torch.sin(pitch * 0.5)
+    cy = torch.cos(yaw * 0.5)
+    sy = torch.sin(yaw * 0.5)
+    return torch.stack(
+        [
+            sr * cp * cy - cr * sp * sy,
+            cr * sp * cy + sr * cp * sy,
+            cr * cp * sy - sr * sp * cy,
+            cr * cp * cy + sr * sp * sy,
+        ],
+        dim=-1,
+    )
+
+
+def _quat_from_rpy_xyzw_np(rpy: np.ndarray) -> np.ndarray:
+    roll = rpy[..., 0]
+    pitch = rpy[..., 1]
+    yaw = rpy[..., 2]
+    cr = np.cos(roll * 0.5)
+    sr = np.sin(roll * 0.5)
+    cp = np.cos(pitch * 0.5)
+    sp = np.sin(pitch * 0.5)
+    cy = np.cos(yaw * 0.5)
+    sy = np.sin(yaw * 0.5)
+    return np.stack(
+        [
+            sr * cp * cy - cr * sp * sy,
+            cr * sp * cy + sr * cp * sy,
+            cr * cp * sy - sr * sp * cy,
+            cr * cp * cy + sr * sp * sy,
+        ],
+        axis=-1,
+    ).astype(np.float32)
+
+
 def _features_to_trajectory(motion_denorm: torch.Tensor, njoints: int, yaw_offset: float = 0.0, dt: float = 1.0 / 30.0) -> torch.Tensor:
-    """Convert [q, local lin vel xyz, angular rates] to [q, root pos xyz, yaw]."""
+    """Convert feature motion to trajectory space.
+
+    Yaw-only features become [q, root_pos_xyz, yaw]. RPY/body-angular features
+    become [q, root_pos_xyz, roll, pitch, yaw].
+    """
     q = motion_denorm[..., :njoints]
     lin_vel_local = motion_denorm[..., njoints:njoints + 3]
     root_ang = motion_denorm[..., njoints + 3:]
     if int(root_ang.shape[-1]) >= 3:
-        rotvec = root_ang[..., :3] * float(dt)
-        angle = torch.linalg.norm(rotvec, dim=-1, keepdim=True)
-        half = 0.5 * angle
-        scale = torch.where(
-            angle > 1e-8,
-            torch.sin(half) / torch.clamp(angle, min=1e-8),
-            0.5 - (angle * angle) / 48.0,
-        )
-        delta = torch.cat([rotvec * scale, torch.cos(half)], dim=-1)
+        delta = _quat_from_rotvec_xyzw(root_ang[..., :3] * float(dt))
         quat_steps = []
         cur = torch.zeros(root_ang.shape[0], 4, dtype=root_ang.dtype, device=root_ang.device)
         cur[:, 3] = 1.0
         for t in range(root_ang.shape[1]):
-            ax, ay, az, aw = cur.unbind(dim=-1)
-            bx, by, bz, bw = delta[:, t].unbind(dim=-1)
-            cur = torch.stack(
-                [
-                    aw * bx + ax * bw + ay * bz - az * by,
-                    aw * by - ax * bz + ay * bw + az * bx,
-                    aw * bz + ax * by - ay * bx + az * bw,
-                    aw * bw - ax * bx - ay * by - az * bz,
-                ],
-                dim=-1,
-            )
+            cur = _quat_mul_xyzw(cur, delta[:, t])
             cur = cur / torch.clamp(torch.linalg.norm(cur, dim=-1, keepdim=True), min=1e-8)
             quat_steps.append(cur)
         root_quat = torch.stack(quat_steps, dim=1)
-        yaw = torch.atan2(
-            2.0 * (root_quat[..., 3] * root_quat[..., 2] + root_quat[..., 0] * root_quat[..., 1]),
-            1.0 - 2.0 * (root_quat[..., 1] * root_quat[..., 1] + root_quat[..., 2] * root_quat[..., 2]),
-        )
-        yaw = yaw + float(yaw_offset)
+        root_orient = _quat_to_rpy_xyzw(root_quat)
+        root_orient[..., 2] = root_orient[..., 2] + float(yaw_offset)
+        yaw = root_orient[..., 2]
     else:
         yaw_rate = root_ang[..., -1]
         yaw = float(yaw_offset) + torch.cumsum(yaw_rate * dt, dim=1)
+        root_orient = yaw.unsqueeze(-1)
     cos_yaw = torch.cos(yaw)
     sin_yaw = torch.sin(yaw)
     world_vx = cos_yaw * lin_vel_local[..., 0] - sin_yaw * lin_vel_local[..., 1]
     world_vy = sin_yaw * lin_vel_local[..., 0] + cos_yaw * lin_vel_local[..., 1]
     world_vz = lin_vel_local[..., 2]
     root_pos = torch.cumsum(torch.stack([world_vx, world_vy, world_vz], dim=-1) * dt, dim=1)
-    return torch.cat([q, root_pos, yaw.unsqueeze(-1)], dim=-1)
+    return torch.cat([q, root_pos, root_orient], dim=-1)
 
 
 def _trajectory_to_pkl(traj: np.ndarray, dst_stats: InferenceStats, fps: float, start_height: float):
@@ -413,17 +478,21 @@ def _trajectory_to_pkl(traj: np.ndarray, dst_stats: InferenceStats, fps: float, 
     root_pos = traj[:, nj:nj + 3].astype(np.float32).copy()
     root_pos = root_pos - root_pos[:1]
     root_pos[:, 2] += float(start_height)
-    yaw = traj[:, nj + 3]
-    half_yaw = yaw * 0.5
-    base_quat = np.stack(
-        [
-            np.zeros(t_len, dtype=np.float32),
-            np.zeros(t_len, dtype=np.float32),
-            np.sin(half_yaw).astype(np.float32),
-            np.cos(half_yaw).astype(np.float32),
-        ],
-        axis=-1,
-    )
+    root_orient = traj[:, nj + 3:]
+    if root_orient.shape[-1] >= 3:
+        base_quat = _quat_from_rpy_xyzw_np(root_orient[:, :3].astype(np.float32))
+    else:
+        yaw = root_orient[:, 0]
+        half_yaw = yaw * 0.5
+        base_quat = np.stack(
+            [
+                np.zeros(t_len, dtype=np.float32),
+                np.zeros(t_len, dtype=np.float32),
+                np.sin(half_yaw).astype(np.float32),
+                np.cos(half_yaw).astype(np.float32),
+            ],
+            axis=-1,
+        )
     return {
         "fps": float(fps),
         "dof_pos": joint_pos.astype(np.float32),
@@ -435,22 +504,18 @@ def _trajectory_to_pkl(traj: np.ndarray, dst_stats: InferenceStats, fps: float, 
 
 
 def _trajectory_to_features(traj: np.ndarray, dst_stats: InferenceStats, fps: float) -> np.ndarray:
-    """Convert [q, root_pos_xyz, yaw] back to [q, local_vel_xyz, yaw_rate]."""
+    """Convert trajectory space back to feature motion."""
     nj = int(dst_stats.njoints)
     dt = 1.0 / float(fps)
     q = traj[:, :nj].astype(np.float32)
     root_pos = traj[:, nj:nj + 3].astype(np.float32)
-    yaw = traj[:, nj + 3].astype(np.float32)
+    root_orient = traj[:, nj + 3:].astype(np.float32)
+    yaw = root_orient[:, -1]
     t_len = int(traj.shape[0])
 
     world_vel = np.zeros((t_len, 3), dtype=np.float32)
-    yaw_rate = np.zeros((t_len,), dtype=np.float32)
     if t_len > 1:
         world_vel[1:] = (root_pos[1:] - root_pos[:-1]) / dt
-        yaw_diff = yaw[1:] - yaw[:-1]
-        yaw_diff = np.arctan2(np.sin(yaw_diff), np.cos(yaw_diff))
-        yaw_rate[1:] = yaw_diff / dt
-    yaw_rate[0] = yaw[0] / dt
 
     cos_yaw = np.cos(yaw)
     sin_yaw = np.sin(yaw)
@@ -460,8 +525,46 @@ def _trajectory_to_features(traj: np.ndarray, dst_stats: InferenceStats, fps: fl
     local_vel[:, 2] = world_vel[:, 2]
     if int(getattr(dst_stats, "root_ang_dim", 1)) == 3:
         root_ang = np.zeros((t_len, 3), dtype=np.float32)
-        root_ang[:, 2] = yaw_rate
+        if root_orient.shape[-1] >= 3 and t_len > 1:
+            q_prev = _quat_from_rpy_xyzw_np(root_orient[:-1, :3])
+            q_next = _quat_from_rpy_xyzw_np(root_orient[1:, :3])
+            q_delta = np.empty_like(q_prev)
+            q_delta[:, :3] = -q_prev[:, :3]
+            q_delta[:, 3] = q_prev[:, 3]
+            ax, ay, az, aw = q_delta.T
+            bx, by, bz, bw = q_next.T
+            dq = np.stack(
+                [
+                    aw * bx + ax * bw + ay * bz - az * by,
+                    aw * by - ax * bz + ay * bw + az * bx,
+                    aw * bz + ax * by - ay * bx + az * bw,
+                    aw * bw - ax * bx - ay * by - az * bz,
+                ],
+                axis=-1,
+            )
+            dq /= np.maximum(np.linalg.norm(dq, axis=-1, keepdims=True), 1e-8)
+            dq = np.where(dq[:, 3:4] < 0.0, -dq, dq)
+            vec = dq[:, :3]
+            w = np.clip(dq[:, 3:4], -1.0, 1.0)
+            sin_half = np.linalg.norm(vec, axis=-1, keepdims=True)
+            angle = 2.0 * np.arctan2(sin_half, w)
+            scale = np.where(sin_half > 1e-8, angle / np.maximum(sin_half, 1e-8), 2.0 + angle * angle / 12.0)
+            root_ang[1:] = (vec * scale / dt).astype(np.float32)
+        else:
+            yaw_rate = np.zeros((t_len,), dtype=np.float32)
+            if t_len > 1:
+                yaw_diff = yaw[1:] - yaw[:-1]
+                yaw_diff = np.arctan2(np.sin(yaw_diff), np.cos(yaw_diff))
+                yaw_rate[1:] = yaw_diff / dt
+            yaw_rate[0] = yaw[0] / dt
+            root_ang[:, 2] = yaw_rate
     else:
+        yaw_rate = np.zeros((t_len,), dtype=np.float32)
+        if t_len > 1:
+            yaw_diff = yaw[1:] - yaw[:-1]
+            yaw_diff = np.arctan2(np.sin(yaw_diff), np.cos(yaw_diff))
+            yaw_rate[1:] = yaw_diff / dt
+        yaw_rate[0] = yaw[0] / dt
         root_ang = yaw_rate[:, None]
     return np.concatenate([q, local_vel, root_ang], axis=-1).astype(np.float32)
 
@@ -470,7 +573,7 @@ def _fk_from_trajectory(fk, traj: torch.Tensor, njoints: int) -> torch.Tensor:
     batch_size, time_steps, _ = traj.shape
     joint_angles = traj[..., :njoints]
     root_pos = traj[..., njoints:njoints + 3]
-    yaw = traj[..., njoints + 3]
+    root_orient = traj[..., njoints + 3:]
     joint_angles_flat = joint_angles.reshape(-1, njoints)
     fk_result = fk.chain.forward_kinematics(joint_angles_flat)
     local_positions = []
@@ -481,10 +584,13 @@ def _fk_from_trajectory(fk, traj: torch.Tensor, njoints: int) -> torch.Tensor:
         raise RuntimeError(f"No FK links found. Available: {list(fk_result.keys())}")
     n_bodies = len(local_positions)
     local_pos = torch.stack(local_positions, dim=1).reshape(batch_size, time_steps, n_bodies, 3)
-    half = yaw * 0.5
-    zeros = torch.zeros_like(half)
-    yaw_quat = torch.stack([zeros, zeros, torch.sin(half), torch.cos(half)], dim=-1)
-    world_pos_rotated = fk._rotate_by_quaternion(local_pos.reshape(-1, n_bodies, 3), yaw_quat.reshape(-1, 4))
+    if int(root_orient.shape[-1]) >= 3:
+        root_quat = _quat_from_rpy_xyzw_torch(root_orient[..., :3])
+    else:
+        half = root_orient[..., 0] * 0.5
+        zeros = torch.zeros_like(half)
+        root_quat = torch.stack([zeros, zeros, torch.sin(half), torch.cos(half)], dim=-1)
+    world_pos_rotated = fk._rotate_by_quaternion(local_pos.reshape(-1, n_bodies, 3), root_quat.reshape(-1, 4))
     world_pos_rotated = world_pos_rotated.reshape(batch_size, time_steps, n_bodies, 3)
     return world_pos_rotated + root_pos.unsqueeze(2)
 
@@ -493,7 +599,7 @@ def _trajectory_base_relative_positions(fk, traj: torch.Tensor, njoints: int) ->
     """Yaw-rotated link positions relative to base, without root translation."""
     batch_size, time_steps, _ = traj.shape
     joint_angles = traj[..., :njoints]
-    yaw = traj[..., njoints + 3]
+    root_orient = traj[..., njoints + 3:]
     joint_angles_flat = joint_angles.reshape(-1, njoints)
     fk_result = fk.chain.forward_kinematics(joint_angles_flat)
     local_positions = []
@@ -504,10 +610,13 @@ def _trajectory_base_relative_positions(fk, traj: torch.Tensor, njoints: int) ->
         raise RuntimeError(f"No FK links found. Available: {list(fk_result.keys())}")
     n_bodies = len(local_positions)
     local_pos = torch.stack(local_positions, dim=1).reshape(batch_size, time_steps, n_bodies, 3)
-    half = yaw * 0.5
-    zeros = torch.zeros_like(half)
-    yaw_quat = torch.stack([zeros, zeros, torch.sin(half), torch.cos(half)], dim=-1)
-    world_pos_rotated = fk._rotate_by_quaternion(local_pos.reshape(-1, n_bodies, 3), yaw_quat.reshape(-1, 4))
+    if int(root_orient.shape[-1]) >= 3:
+        root_quat = _quat_from_rpy_xyzw_torch(root_orient[..., :3])
+    else:
+        half = root_orient[..., 0] * 0.5
+        zeros = torch.zeros_like(half)
+        root_quat = torch.stack([zeros, zeros, torch.sin(half), torch.cos(half)], dim=-1)
+    world_pos_rotated = fk._rotate_by_quaternion(local_pos.reshape(-1, n_bodies, 3), root_quat.reshape(-1, 4))
     world_pos_rotated = world_pos_rotated.reshape(batch_size, time_steps, n_bodies, 3)
     return world_pos_rotated - world_pos_rotated[:, :, 0:1, :]
 
@@ -587,10 +696,18 @@ def _apply_root_channel_mask(corrected: torch.Tensor, teacher: torch.Tensor, njo
         return torch.cat([corrected[..., :njoints], teacher[..., njoints:]], dim=-1)
     root_corr = corrected[..., njoints:njoints + 3]
     root_teacher = teacher[..., njoints:njoints + 3]
+    orient_corr = corrected[..., njoints + 3:]
+    orient_teacher = teacher[..., njoints + 3:]
     xy = root_corr[..., :2] if bool(cfg.get("correct_root_xy", True)) else root_teacher[..., :2]
     z = root_corr[..., 2:3] if bool(cfg.get("correct_root_z", True)) else root_teacher[..., 2:3]
-    ang = corrected[..., njoints + 3:] if bool(cfg.get("correct_root_yaw", True)) else teacher[..., njoints + 3:]
-    return torch.cat([corrected[..., :njoints], xy, z, ang], dim=-1)
+    if int(orient_corr.shape[-1]) >= 3:
+        roll = orient_corr[..., 0:1] if bool(cfg.get("correct_root_roll", True)) else orient_teacher[..., 0:1]
+        pitch = orient_corr[..., 1:2] if bool(cfg.get("correct_root_pitch", True)) else orient_teacher[..., 1:2]
+        yaw = orient_corr[..., 2:3] if bool(cfg.get("correct_root_yaw", True)) else orient_teacher[..., 2:3]
+        orient = torch.cat([roll, pitch, yaw], dim=-1)
+    else:
+        orient = orient_corr if bool(cfg.get("correct_root_yaw", True)) else orient_teacher
+    return torch.cat([corrected[..., :njoints], xy, z, orient], dim=-1)
 
 
 def _apply_stance_root_velocity_compensation(
@@ -809,12 +926,15 @@ def _load_corrector(
         joint_delta_max=float(cfg.get("joint_delta_max", 0.35)),
         linvel_delta_max=float(cfg.get("linvel_delta_max", 0.30)),
         yaw_delta_max=float(cfg.get("yaw_delta_max", 0.80)),
+        root_rot_delta_max=float(cfg.get("root_rot_delta_max", cfg.get("yaw_delta_max", 0.80))),
     ).to(device)
     state = ckpt.get("model_state", ckpt)
     model.load_state_dict(state, strict=True)
     model.correct_root_motion = bool(cfg.get("correct_root_motion", True))
     model.correct_root_xy = bool(cfg.get("correct_root_xy", True))
     model.correct_root_z = bool(cfg.get("correct_root_z", True))
+    model.correct_root_roll = bool(cfg.get("correct_root_roll", True))
+    model.correct_root_pitch = bool(cfg.get("correct_root_pitch", True))
     model.correct_root_yaw = bool(cfg.get("correct_root_yaw", True))
     model.eval()
     return model
@@ -928,7 +1048,7 @@ def main() -> None:
         corrector = _load_corrector(
             ckpt_path=str(Path(cli.corrector_ckpt).expanduser().resolve()),
             device=args.device,
-            motion_dim=int(dst_stats_active.njoints + 4),
+            motion_dim=int(dst_stats_active.motion_dim),
             joint_dim=int(dst_stats_active.njoints),
         )
 
@@ -982,6 +1102,8 @@ def main() -> None:
                     "correct_root_motion": bool(getattr(corrector, "correct_root_motion", True)),
                     "correct_root_xy": bool(getattr(corrector, "correct_root_xy", True)),
                     "correct_root_z": bool(getattr(corrector, "correct_root_z", True)),
+                    "correct_root_roll": bool(getattr(corrector, "correct_root_roll", True)),
+                    "correct_root_pitch": bool(getattr(corrector, "correct_root_pitch", True)),
                     "correct_root_yaw": bool(getattr(corrector, "correct_root_yaw", True)),
                 }
                 corrected_traj_t = _apply_root_channel_mask(corrected_traj_t, teacher_traj_t, nj, cfg)

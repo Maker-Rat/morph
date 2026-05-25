@@ -206,6 +206,26 @@ def _smooth_loss(delta: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     return ((diff ** 2) * pair_mask).sum() / denom
 
 
+def _joint_velocity_smooth_loss(joint_angles: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    # Penalizes corrected joint velocity magnitude. Use lightly; it can damp motion.
+    if joint_angles.shape[1] <= 1:
+        return torch.zeros((), dtype=joint_angles.dtype, device=joint_angles.device)
+    vel = joint_angles[:, 1:] - joint_angles[:, :-1]
+    pair_mask = (mask[:, 1:] * mask[:, :-1]).unsqueeze(-1)
+    denom = torch.clamp(pair_mask.sum() * joint_angles.shape[-1], min=1e-8)
+    return ((vel ** 2) * pair_mask).sum() / denom
+
+
+def _joint_acceleration_smooth_loss(joint_angles: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    # Penalizes corrected joint acceleration magnitude; usually the safer anti-jitter term.
+    if joint_angles.shape[1] <= 2:
+        return torch.zeros((), dtype=joint_angles.dtype, device=joint_angles.device)
+    acc = joint_angles[:, 2:] - 2.0 * joint_angles[:, 1:-1] + joint_angles[:, :-2]
+    triple_mask = (mask[:, 2:] * mask[:, 1:-1] * mask[:, :-2]).unsqueeze(-1)
+    denom = torch.clamp(triple_mask.sum() * joint_angles.shape[-1], min=1e-8)
+    return ((acc ** 2) * triple_mask).sum() / denom
+
+
 def _joint_limit_loss(
     joint_angles: torch.Tensor,
     lower: torch.Tensor,
@@ -216,46 +236,90 @@ def _joint_limit_loss(
     return (low_v.square().mean() + upp_v.square().mean())
 
 
+def _quat_mul_xyzw(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    ax, ay, az, aw = a.unbind(dim=-1)
+    bx, by, bz, bw = b.unbind(dim=-1)
+    return torch.stack(
+        [
+            aw * bx + ax * bw + ay * bz - az * by,
+            aw * by - ax * bz + ay * bw + az * bx,
+            aw * bz + ax * by - ay * bx + az * bw,
+            aw * bw - ax * bx - ay * by - az * bz,
+        ],
+        dim=-1,
+    )
+
+
+def _quat_conj_xyzw(q: torch.Tensor) -> torch.Tensor:
+    return torch.cat([-q[..., :3], q[..., 3:4]], dim=-1)
+
+
+def _quat_from_rotvec_xyzw(rotvec: torch.Tensor) -> torch.Tensor:
+    angle = torch.linalg.norm(rotvec, dim=-1, keepdim=True)
+    half = 0.5 * angle
+    scale = torch.where(
+        angle > 1e-8,
+        torch.sin(half) / torch.clamp(angle, min=1e-8),
+        0.5 - (angle * angle) / 48.0,
+    )
+    return torch.cat([rotvec * scale, torch.cos(half)], dim=-1)
+
+
+def _quat_to_rpy_xyzw(q: torch.Tensor) -> torch.Tensor:
+    x, y, z, w = q.unbind(dim=-1)
+    roll = torch.atan2(2.0 * (w * x + y * z), 1.0 - 2.0 * (x * x + y * y))
+    sinp = 2.0 * (w * y - z * x)
+    pitch = torch.asin(torch.clamp(sinp, -1.0, 1.0))
+    yaw = torch.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+    return torch.stack([roll, pitch, yaw], dim=-1)
+
+
+def _quat_from_rpy_xyzw(rpy: torch.Tensor) -> torch.Tensor:
+    roll = rpy[..., 0]
+    pitch = rpy[..., 1]
+    yaw = rpy[..., 2]
+    cr = torch.cos(roll * 0.5)
+    sr = torch.sin(roll * 0.5)
+    cp = torch.cos(pitch * 0.5)
+    sp = torch.sin(pitch * 0.5)
+    cy = torch.cos(yaw * 0.5)
+    sy = torch.sin(yaw * 0.5)
+    return torch.stack(
+        [
+            sr * cp * cy - cr * sp * sy,
+            cr * sp * cy + sr * cp * sy,
+            cr * cp * sy - sr * sp * cy,
+            cr * cp * cy + sr * sp * sy,
+        ],
+        dim=-1,
+    )
+
+
 def _features_to_trajectory(motion_denorm: torch.Tensor, njoints: int, dt: float = 1.0 / 30.0) -> torch.Tensor:
-    """Convert [q, local lin vel xyz, angular rates] to [q, root pos xyz, yaw]."""
+    """Convert feature motion to trajectory space.
+
+    Yaw-only features become [q, root_pos_xyz, yaw]. RPY/body-angular features
+    become [q, root_pos_xyz, roll, pitch, yaw].
+    """
     q = motion_denorm[..., :njoints]
     lin_vel_local = motion_denorm[..., njoints:njoints + 3]
     root_ang = motion_denorm[..., njoints + 3:]
     if int(root_ang.shape[-1]) >= 3:
-        rotvec = root_ang[..., :3] * float(dt)
-        angle = torch.linalg.norm(rotvec, dim=-1, keepdim=True)
-        half = 0.5 * angle
-        scale = torch.where(
-            angle > 1e-8,
-            torch.sin(half) / torch.clamp(angle, min=1e-8),
-            0.5 - (angle * angle) / 48.0,
-        )
-        delta = torch.cat([rotvec * scale, torch.cos(half)], dim=-1)
+        delta = _quat_from_rotvec_xyzw(root_ang[..., :3] * float(dt))
         quat_steps = []
         cur = torch.zeros(root_ang.shape[0], 4, dtype=root_ang.dtype, device=root_ang.device)
         cur[:, 3] = 1.0
         for t in range(root_ang.shape[1]):
-            ax, ay, az, aw = cur.unbind(dim=-1)
-            bx, by, bz, bw = delta[:, t].unbind(dim=-1)
-            cur = torch.stack(
-                [
-                    aw * bx + ax * bw + ay * bz - az * by,
-                    aw * by - ax * bz + ay * bw + az * bx,
-                    aw * bz + ax * by - ay * bx + az * bw,
-                    aw * bw - ax * bx - ay * by - az * bz,
-                ],
-                dim=-1,
-            )
+            cur = _quat_mul_xyzw(cur, delta[:, t])
             cur = cur / torch.clamp(torch.linalg.norm(cur, dim=-1, keepdim=True), min=1e-8)
             quat_steps.append(cur)
         root_quat = torch.stack(quat_steps, dim=1)
-        yaw = torch.atan2(
-            2.0 * (root_quat[..., 3] * root_quat[..., 2] + root_quat[..., 0] * root_quat[..., 1]),
-            1.0 - 2.0 * (root_quat[..., 1] * root_quat[..., 1] + root_quat[..., 2] * root_quat[..., 2]),
-        )
+        root_orient = _quat_to_rpy_xyzw(root_quat)
+        yaw = root_orient[..., 2]
     else:
         yaw_rate = root_ang[..., -1]
         yaw = torch.cumsum(yaw_rate * dt, dim=1)
+        root_orient = yaw.unsqueeze(-1)
 
     cos_yaw = torch.cos(yaw)
     sin_yaw = torch.sin(yaw)
@@ -264,15 +328,15 @@ def _features_to_trajectory(motion_denorm: torch.Tensor, njoints: int, dt: float
     world_vz = lin_vel_local[..., 2]
     world_vel = torch.stack([world_vx, world_vy, world_vz], dim=-1)
     root_pos = torch.cumsum(world_vel * dt, dim=1)
-    return torch.cat([q, root_pos, yaw.unsqueeze(-1)], dim=-1)
+    return torch.cat([q, root_pos, root_orient], dim=-1)
 
 
 def _fk_from_trajectory(fk, traj: torch.Tensor, njoints: int) -> torch.Tensor:
-    """Direct FK for [q, root pos xyz, yaw] without velocity integration."""
+    """Direct FK for trajectory space without velocity integration."""
     batch_size, time_steps, _ = traj.shape
     joint_angles = traj[..., :njoints]
     root_pos = traj[..., njoints:njoints + 3]
-    yaw = traj[..., njoints + 3]
+    root_orient = traj[..., njoints + 3:]
 
     joint_angles_flat = joint_angles.reshape(-1, njoints)
     fk_result = fk.chain.forward_kinematics(joint_angles_flat)
@@ -285,51 +349,86 @@ def _fk_from_trajectory(fk, traj: torch.Tensor, njoints: int) -> torch.Tensor:
 
     n_bodies = len(local_positions)
     local_pos = torch.stack(local_positions, dim=1).reshape(batch_size, time_steps, n_bodies, 3)
-    half = yaw * 0.5
-    zeros = torch.zeros_like(half)
-    yaw_quat = torch.stack([zeros, zeros, torch.sin(half), torch.cos(half)], dim=-1)
+    if int(root_orient.shape[-1]) >= 3:
+        root_quat = _quat_from_rpy_xyzw(root_orient[..., :3])
+    else:
+        half = root_orient[..., 0] * 0.5
+        zeros = torch.zeros_like(half)
+        root_quat = torch.stack([zeros, zeros, torch.sin(half), torch.cos(half)], dim=-1)
     world_pos_rotated = fk._rotate_by_quaternion(
         local_pos.reshape(-1, n_bodies, 3),
-        yaw_quat.reshape(-1, 4),
+        root_quat.reshape(-1, 4),
     ).reshape(batch_size, time_steps, n_bodies, 3)
     return world_pos_rotated + root_pos.unsqueeze(2)
 
 
 def _apply_root_channel_mask(corrected: torch.Tensor, teacher: torch.Tensor, njoints: int, params: dict) -> torch.Tensor:
     if not bool(params.get("correct_root_motion", True)):
-        return torch.cat([corrected[..., :njoints], teacher[..., njoints:njoints + 4]], dim=-1)
+        return torch.cat([corrected[..., :njoints], teacher[..., njoints:]], dim=-1)
     parts = [corrected[..., :njoints]]
     root_corr = corrected[..., njoints:njoints + 3]
     root_teacher = teacher[..., njoints:njoints + 3]
+    orient_corr = corrected[..., njoints + 3:]
+    orient_teacher = teacher[..., njoints + 3:]
     xy = root_corr[..., :2] if bool(params.get("correct_root_xy", True)) else root_teacher[..., :2]
     z = root_corr[..., 2:3] if bool(params.get("correct_root_z", True)) else root_teacher[..., 2:3]
-    yaw = corrected[..., njoints + 3:njoints + 4] if bool(params.get("correct_root_yaw", True)) else teacher[..., njoints + 3:njoints + 4]
-    parts.extend([xy, z, yaw])
+    if int(orient_corr.shape[-1]) >= 3:
+        roll = orient_corr[..., 0:1] if bool(params.get("correct_root_roll", True)) else orient_teacher[..., 0:1]
+        pitch = orient_corr[..., 1:2] if bool(params.get("correct_root_pitch", True)) else orient_teacher[..., 1:2]
+        yaw = orient_corr[..., 2:3] if bool(params.get("correct_root_yaw", True)) else orient_teacher[..., 2:3]
+        orient = torch.cat([roll, pitch, yaw], dim=-1)
+    else:
+        orient = orient_corr if bool(params.get("correct_root_yaw", True)) else orient_teacher
+    parts.extend([xy, z, orient])
     return torch.cat(parts, dim=-1)
 
 
 def _trajectory_root_velocity_local(traj: torch.Tensor, njoints: int, dt: float = 1.0 / 30.0) -> torch.Tensor:
-    """Finite-difference corrected [root_pos_xyz, yaw] into [local_vel_xyz, yaw_rate].
+    """Finite-difference corrected trajectory into local root motion.
 
     Teacher velocity targets still come from the original teacher feature channels; this only
     converts the corrected position-space output into the same velocity representation.
     """
     root_pos = traj[..., njoints:njoints + 3]
-    yaw = traj[..., njoints + 3]
+    root_orient = traj[..., njoints + 3:]
     if traj.shape[1] <= 1:
-        return torch.zeros(traj.shape[0], 0, 4, dtype=traj.dtype, device=traj.device)
+        return torch.zeros(traj.shape[0], 0, 3 + root_orient.shape[-1], dtype=traj.dtype, device=traj.device)
 
     world_vel = (root_pos[:, 1:] - root_pos[:, :-1]) / float(dt)
-    yaw_next = yaw[:, 1:]
+    yaw_next = root_orient[:, 1:, -1]
     cos_yaw = torch.cos(yaw_next)
     sin_yaw = torch.sin(yaw_next)
     local_vx = cos_yaw * world_vel[..., 0] + sin_yaw * world_vel[..., 1]
     local_vy = -sin_yaw * world_vel[..., 0] + cos_yaw * world_vel[..., 1]
     local_vz = world_vel[..., 2]
-    yaw_diff = yaw[:, 1:] - yaw[:, :-1]
-    yaw_diff = torch.atan2(torch.sin(yaw_diff), torch.cos(yaw_diff))
-    yaw_rate = yaw_diff / float(dt)
-    return torch.stack([local_vx, local_vy, local_vz, yaw_rate], dim=-1)
+    if int(root_orient.shape[-1]) >= 3:
+        q_prev = _quat_from_rpy_xyzw(root_orient[:, :-1, :3])
+        q_next = _quat_from_rpy_xyzw(root_orient[:, 1:, :3])
+        q_delta = _quat_mul_xyzw(_quat_conj_xyzw(q_prev), q_next)
+        q_delta = q_delta / torch.clamp(torch.linalg.norm(q_delta, dim=-1, keepdim=True), min=1e-8)
+        q_delta = torch.where(q_delta[..., 3:4] < 0.0, -q_delta, q_delta)
+        vec = q_delta[..., :3]
+        w = torch.clamp(q_delta[..., 3:4], -1.0, 1.0)
+        sin_half = torch.linalg.norm(vec, dim=-1, keepdim=True)
+        angle = 2.0 * torch.atan2(sin_half, w)
+        axis_scale = torch.where(sin_half > 1e-8, angle / torch.clamp(sin_half, min=1e-8), 2.0 + angle * angle / 12.0)
+        ang_vel = vec * axis_scale / float(dt)
+    else:
+        yaw = root_orient[..., 0]
+        yaw_diff = yaw[:, 1:] - yaw[:, :-1]
+        yaw_diff = torch.atan2(torch.sin(yaw_diff), torch.cos(yaw_diff))
+        ang_vel = (yaw_diff / float(dt)).unsqueeze(-1)
+    return torch.cat([torch.stack([local_vx, local_vy, local_vz], dim=-1), ang_vel], dim=-1)
+
+
+def _base_level_loss(traj: torch.Tensor, njoints: int, mask: torch.Tensor) -> torch.Tensor:
+    root_orient = traj[..., njoints + 3:]
+    if int(root_orient.shape[-1]) < 3:
+        return torch.zeros((), dtype=traj.dtype, device=traj.device)
+    roll_pitch = root_orient[..., :2]
+    w = mask.unsqueeze(-1)
+    denom = torch.clamp(w.sum() * 2, min=1e-8)
+    return ((roll_pitch ** 2) * w).sum() / denom
 
 
 def _masked_mse_pair(a: torch.Tensor, b: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
@@ -469,6 +568,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--joint-delta-max", type=float, default=None)
     p.add_argument("--root-pos-delta-max", type=float, default=None)
     p.add_argument("--yaw-delta-max", type=float, default=None)
+    p.add_argument("--root-rot-delta-max", type=float, default=None)
     p.add_argument("--correct-root-motion", dest="correct_root_motion", action="store_true", default=None,
                    help="Allow the corrector to modify root velocity/yaw-rate channels.")
     p.add_argument("--no-correct-root-motion", dest="correct_root_motion", action="store_false",
@@ -479,14 +579,22 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-correct-root-z", dest="correct_root_z", action="store_false")
     p.add_argument("--correct-root-yaw", dest="correct_root_yaw", action="store_true", default=None)
     p.add_argument("--no-correct-root-yaw", dest="correct_root_yaw", action="store_false")
+    p.add_argument("--correct-root-roll", dest="correct_root_roll", action="store_true", default=None)
+    p.add_argument("--no-correct-root-roll", dest="correct_root_roll", action="store_false")
+    p.add_argument("--correct-root-pitch", dest="correct_root_pitch", action="store_true", default=None)
+    p.add_argument("--no-correct-root-pitch", dest="correct_root_pitch", action="store_false")
 
     p.add_argument("--lambda-preserve-joints", type=float, default=None)
     p.add_argument("--lambda-preserve-root-vel", type=float, default=None,
                    help="Legacy alias: sets XY, Z, and yaw-rate root preserve weights together.")
     p.add_argument("--lambda-preserve-root-vel-xy", type=float, default=None)
     p.add_argument("--lambda-preserve-root-vel-z", type=float, default=None)
+    p.add_argument("--lambda-preserve-root-roll-pitch-rate", type=float, default=None)
     p.add_argument("--lambda-preserve-root-yaw-rate", type=float, default=None)
+    p.add_argument("--lambda-base-level", type=float, default=None)
     p.add_argument("--lambda-smooth", type=float, default=None)
+    p.add_argument("--lambda-smooth-joint-vel", type=float, default=None)
+    p.add_argument("--lambda-smooth-joint-acc", type=float, default=None)
     p.add_argument("--lambda-skating", type=float, default=None)
     p.add_argument("--lambda-grounding", type=float, default=None)
     p.add_argument("--lambda-joint-limits", type=float, default=None)
@@ -536,17 +644,24 @@ def main() -> None:
         "joint_delta_max": float(model_cfg.get("joint_delta_max", 0.35)),
         "root_pos_delta_max": float(model_cfg.get("root_pos_delta_max", model_cfg.get("linvel_delta_max", 0.30))),
         "yaw_delta_max": float(model_cfg.get("yaw_delta_max", 0.80)),
+        "root_rot_delta_max": float(model_cfg.get("root_rot_delta_max", model_cfg.get("yaw_delta_max", 0.80))),
         "correct_root_motion": bool(model_cfg.get("correct_root_motion", True)),
         "correct_root_xy": bool(model_cfg.get("correct_root_xy", True)),
         "correct_root_z": bool(model_cfg.get("correct_root_z", True)),
+        "correct_root_roll": bool(model_cfg.get("correct_root_roll", True)),
+        "correct_root_pitch": bool(model_cfg.get("correct_root_pitch", True)),
         "correct_root_yaw": bool(model_cfg.get("correct_root_yaw", True)),
         "train_seq_len": int(model_cfg.get("train_seq_len", 1024)),
         "eval_seq_len": int(model_cfg.get("eval_seq_len", 0)),
         "lambda_preserve_joints": float(model_cfg.get("lambda_preserve_joints", model_cfg.get("lambda_preserve", 1.0))),
         "lambda_preserve_root_vel_xy": float(model_cfg.get("lambda_preserve_root_vel_xy", model_cfg.get("lambda_preserve_root_vel", 1.0))),
         "lambda_preserve_root_vel_z": float(model_cfg.get("lambda_preserve_root_vel_z", model_cfg.get("lambda_preserve_root_vel", 1.0))),
+        "lambda_preserve_root_roll_pitch_rate": float(model_cfg.get("lambda_preserve_root_roll_pitch_rate", 0.0)),
         "lambda_preserve_root_yaw_rate": float(model_cfg.get("lambda_preserve_root_yaw_rate", model_cfg.get("lambda_preserve_root_vel", 1.0))),
+        "lambda_base_level": float(model_cfg.get("lambda_base_level", 0.0)),
         "lambda_smooth": float(model_cfg.get("lambda_smooth", 0.1)),
+        "lambda_smooth_joint_vel": float(model_cfg.get("lambda_smooth_joint_vel", 0.0)),
+        "lambda_smooth_joint_acc": float(model_cfg.get("lambda_smooth_joint_acc", 0.0)),
         "lambda_skating": float(model_cfg.get("lambda_skating", resolved.loss_weights.get("lambda_skating", 0.0))),
         "lambda_grounding": float(model_cfg.get("lambda_grounding", resolved.loss_weights.get("lambda_grounding", 0.0))),
         "lambda_joint_limits": float(model_cfg.get("lambda_joint_limits", 0.1)),
@@ -564,9 +679,11 @@ def main() -> None:
         if v is not None:
             params[key] = int(v)
     for key in (
-        "lr", "weight_decay", "dropout", "joint_delta_max", "root_pos_delta_max", "yaw_delta_max",
+        "lr", "weight_decay", "dropout", "joint_delta_max", "root_pos_delta_max", "yaw_delta_max", "root_rot_delta_max",
         "lambda_preserve_joints", "lambda_preserve_root_vel_xy", "lambda_preserve_root_vel_z",
-        "lambda_preserve_root_yaw_rate", "lambda_smooth", "lambda_skating",
+        "lambda_preserve_root_roll_pitch_rate", "lambda_preserve_root_yaw_rate", "lambda_base_level",
+        "lambda_smooth", "lambda_smooth_joint_vel",
+        "lambda_smooth_joint_acc", "lambda_skating",
         "lambda_grounding", "lambda_joint_limits", "ground_margin", "src_start_height", "dst_start_height",
     ):
         v = getattr(cli, key)
@@ -576,10 +693,11 @@ def main() -> None:
         legacy_root_weight = float(cli.lambda_preserve_root_vel)
         params["lambda_preserve_root_vel_xy"] = legacy_root_weight
         params["lambda_preserve_root_vel_z"] = legacy_root_weight
+        params["lambda_preserve_root_roll_pitch_rate"] = legacy_root_weight
         params["lambda_preserve_root_yaw_rate"] = legacy_root_weight
     if cli.correct_root_motion is not None:
         params["correct_root_motion"] = bool(cli.correct_root_motion)
-    for key in ("correct_root_xy", "correct_root_z", "correct_root_yaw"):
+    for key in ("correct_root_xy", "correct_root_z", "correct_root_roll", "correct_root_pitch", "correct_root_yaw"):
         v = getattr(cli, key)
         if v is not None:
             params[key] = bool(v)
@@ -692,14 +810,13 @@ def main() -> None:
         dst_joint_limits_low = torch.tensor(src_robot.joint_limit_lower, dtype=torch.float32, device=args.device)
         dst_joint_limits_upp = torch.tensor(src_robot.joint_limit_upper, dtype=torch.float32, device=args.device)
         dst_njoints = int(src_robot.njoints)
-        dst_motion_dim = int(src_robot.njoints + 4)
     else:
         src_foot_idx = list(resolved.src_feet_indices)
         dst_foot_idx = list(resolved.dst_feet_indices)
         dst_joint_limits_low = torch.tensor(dst_robot.joint_limit_lower, dtype=torch.float32, device=args.device)
         dst_joint_limits_upp = torch.tensor(dst_robot.joint_limit_upper, dtype=torch.float32, device=args.device)
         dst_njoints = int(dst_robot.njoints)
-        dst_motion_dim = int(dst_robot.njoints + 4)
+    dst_motion_dim = int(datasets[dst_idx].motion_dim)
 
     src_pkl_dir = Path(cli.src_pkl_dir).expanduser().resolve()
     if not src_pkl_dir.exists():
@@ -748,6 +865,7 @@ def main() -> None:
         joint_delta_max=float(params["joint_delta_max"]),
         linvel_delta_max=float(params["root_pos_delta_max"]),
         yaw_delta_max=float(params["yaw_delta_max"]),
+        root_rot_delta_max=float(params["root_rot_delta_max"]),
     ).to(args.device)
 
     optimizer = torch.optim.AdamW(
@@ -826,8 +944,12 @@ def main() -> None:
             "preserve_j": 0.0,
             "preserve_root_vel_xy": 0.0,
             "preserve_root_vel_z": 0.0,
+            "preserve_root_roll_pitch_rate": 0.0,
             "preserve_root_yaw_rate": 0.0,
+            "base_level": 0.0,
             "smooth": 0.0,
+            "smooth_joint_vel": 0.0,
+            "smooth_joint_acc": 0.0,
             "physics": 0.0,
             "joint_limits": 0.0,
             "contact_dst": 0.0,
@@ -864,14 +986,28 @@ def main() -> None:
 
             preserve_j = _masked_mse(corrected_denorm[..., :dst_njoints], teacher_batch[..., :dst_njoints], mask)
             corrected_root_vel = _trajectory_root_velocity_local(corrected_denorm, dst_njoints)
-            teacher_lin_vel = teacher_features[:, 1:, dst_njoints:dst_njoints + 3]
-            teacher_yaw_rate = teacher_features[:, 1:, -1:]
-            teacher_root_vel = torch.cat([teacher_lin_vel, teacher_yaw_rate], dim=-1)
+            teacher_root_vel = teacher_features[:, 1:, dst_njoints:dst_njoints + corrected_root_vel.shape[-1]]
             root_vel_mask = mask[:, 1:]
             preserve_root_vel_xy = _masked_mse_pair(corrected_root_vel[..., :2], teacher_root_vel[..., :2], root_vel_mask)
             preserve_root_vel_z = _masked_mse_pair(corrected_root_vel[..., 2:3], teacher_root_vel[..., 2:3], root_vel_mask)
-            preserve_root_yaw_rate = _masked_mse_pair(corrected_root_vel[..., 3:4], teacher_root_vel[..., 3:4], root_vel_mask)
+            if corrected_root_vel.shape[-1] >= 6:
+                preserve_root_roll_pitch_rate = _masked_mse_pair(
+                    corrected_root_vel[..., 3:5],
+                    teacher_root_vel[..., 3:5],
+                    root_vel_mask,
+                )
+                preserve_root_yaw_rate = _masked_mse_pair(
+                    corrected_root_vel[..., 5:6],
+                    teacher_root_vel[..., 5:6],
+                    root_vel_mask,
+                )
+            else:
+                preserve_root_roll_pitch_rate = torch.zeros((), dtype=teacher_batch.dtype, device=args.device)
+                preserve_root_yaw_rate = _masked_mse_pair(corrected_root_vel[..., 3:4], teacher_root_vel[..., 3:4], root_vel_mask)
+            base_level = _base_level_loss(corrected_denorm, dst_njoints, mask)
             smooth = _smooth_loss(delta, mask)
+            smooth_joint_vel = _joint_velocity_smooth_loss(corrected_denorm[..., :dst_njoints], mask)
+            smooth_joint_acc = _joint_acceleration_smooth_loss(corrected_denorm[..., :dst_njoints], mask)
 
             physics_total = torch.zeros((), dtype=teacher_batch.dtype, device=args.device)
             jl_total = torch.zeros((), dtype=teacher_batch.dtype, device=args.device)
@@ -919,8 +1055,12 @@ def main() -> None:
                 float(params["lambda_preserve_joints"]) * preserve_j
                 + float(params["lambda_preserve_root_vel_xy"]) * preserve_root_vel_xy
                 + float(params["lambda_preserve_root_vel_z"]) * preserve_root_vel_z
+                + float(params["lambda_preserve_root_roll_pitch_rate"]) * preserve_root_roll_pitch_rate
                 + float(params["lambda_preserve_root_yaw_rate"]) * preserve_root_yaw_rate
+                + float(params["lambda_base_level"]) * base_level
                 + float(params["lambda_smooth"]) * smooth
+                + float(params["lambda_smooth_joint_vel"]) * smooth_joint_vel
+                + float(params["lambda_smooth_joint_acc"]) * smooth_joint_acc
                 + physics
                 + float(params["lambda_joint_limits"]) * jl
             )
@@ -936,8 +1076,12 @@ def main() -> None:
             sums["preserve_j"] += float(preserve_j.item()) * nclip
             sums["preserve_root_vel_xy"] += float(preserve_root_vel_xy.item()) * nclip
             sums["preserve_root_vel_z"] += float(preserve_root_vel_z.item()) * nclip
+            sums["preserve_root_roll_pitch_rate"] += float(preserve_root_roll_pitch_rate.item()) * nclip
             sums["preserve_root_yaw_rate"] += float(preserve_root_yaw_rate.item()) * nclip
+            sums["base_level"] += float(base_level.item()) * nclip
             sums["smooth"] += float(smooth.item()) * nclip
+            sums["smooth_joint_vel"] += float(smooth_joint_vel.item()) * nclip
+            sums["smooth_joint_acc"] += float(smooth_joint_acc.item()) * nclip
             sums["physics"] += float(physics.item()) * nclip
             sums["joint_limits"] += float(jl.item()) * nclip
             sums["contact_dst"] += float(phy_log_acc["contact_dst"]) * nclip
@@ -954,9 +1098,13 @@ def main() -> None:
                     "train/step_preserve_joints": sums["preserve_j"] / n,
                     "train/step_preserve_root_vel_xy": sums["preserve_root_vel_xy"] / n,
                     "train/step_preserve_root_vel_z": sums["preserve_root_vel_z"] / n,
+                    "train/step_preserve_root_roll_pitch_rate": sums["preserve_root_roll_pitch_rate"] / n,
                     "train/step_preserve_root_yaw_rate": sums["preserve_root_yaw_rate"] / n,
+                    "train/step_base_level": sums["base_level"] / n,
                     "train/step_physics": sums["physics"] / n,
                     "train/step_smooth": sums["smooth"] / n,
+                    "train/step_smooth_joint_vel": sums["smooth_joint_vel"] / n,
+                    "train/step_smooth_joint_acc": sums["smooth_joint_acc"] / n,
                     "train/step_joint_limits": sums["joint_limits"] / n,
                 }
                 print(
@@ -975,8 +1123,12 @@ def main() -> None:
             "preserve_j": sums["preserve_j"] / n,
             "preserve_root_vel_xy": sums["preserve_root_vel_xy"] / n,
             "preserve_root_vel_z": sums["preserve_root_vel_z"] / n,
+            "preserve_root_roll_pitch_rate": sums["preserve_root_roll_pitch_rate"] / n,
             "preserve_root_yaw_rate": sums["preserve_root_yaw_rate"] / n,
+            "base_level": sums["base_level"] / n,
             "smooth": sums["smooth"] / n,
+            "smooth_joint_vel": sums["smooth_joint_vel"] / n,
+            "smooth_joint_acc": sums["smooth_joint_acc"] / n,
             "physics": sums["physics"] / n,
             "joint_limits": sums["joint_limits"] / n,
             "contact_dst": sums["contact_dst"] / n,
@@ -990,7 +1142,11 @@ def main() -> None:
     print("Starting corrector training...")
     print(f"  direction: {'reverse' if cli.reverse else 'forward'} ({src_name} -> {dst_name})")
     print(f"  device: {args.device}")
-    print(f"  root_correction=({params['correct_root_xy']},{params['correct_root_z']},{params['correct_root_yaw']})")
+    print(
+        "  root_correction="
+        f"(xy={params['correct_root_xy']}, z={params['correct_root_z']}, "
+        f"roll={params['correct_root_roll']}, pitch={params['correct_root_pitch']}, yaw={params['correct_root_yaw']})"
+    )
     print(f"  train_seq_len={params['train_seq_len']} eval_seq_len={params['eval_seq_len']} batch_size={params['batch_size']}")
 
     for epoch in range(1, int(params["epochs"]) + 1):

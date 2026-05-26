@@ -23,7 +23,32 @@ correspondence:
   - name: front_right
     src_joint_indices: [22, 23, 24, 25]
     dst_joint_indices: [0, 1, 2]
-loss_overrides: {}
+loss_overrides: 
+  lambda_rec: 2.5
+  lambda_cycle: 0.0
+  lambda_retar_vel: 250.0
+  lambda_cycle_motion: 10.0
+  joint_limit_threshold: 0.85
+  joint_limit_loss_weight: 0.1
+  lambda_skating: 1.0
+  lambda_grounding: 5.0
+  lambda_ee: 0.25
+  ee_weight_manip: 1.0
+  ee_weight_locomotion: 0.0
+  lambda_cycle_latent: 1.0
+  lambda_cycle_fk: 0.1
+  physics_ground_mode: zero_nominal
+  ee_match_mode: disp
+  ee_norm_mode: none
+  retar_vel_matching: mapping
+  retar_vel_deadzone: 0.075
+  retar_vel_map_z: false
+  lambda_retar_roll_rate: 0.0
+  lambda_retar_pitch_rate: 0.0
+  lambda_retar_yaw_rate: 25.0
+  retar_yaw_rate_scale: 0.75
+  retar_vel_src_vmax_percentile: 95.0
+  retar_vel_dst_vmax_percentile: 90.0
 indices:
   src_feet: [7, 15]
   dst_feet: [16, 12]

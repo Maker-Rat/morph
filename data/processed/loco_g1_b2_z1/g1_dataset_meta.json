@@ -1,0 +1,11 @@
+{
+  "robot": {
+    "robot_id": "g1",
+    "stats_path": "/home/psyduck/Ritwik/morph/data/processed/loco_g1_b2_z1/g1_stats.npz",
+    "train_path": "/home/psyduck/Ritwik/morph/data/processed/loco_g1_b2_z1/g1_train.npz",
+    "test_path": "/home/psyduck/Ritwik/morph/data/processed/loco_g1_b2_z1/g1_test.npz",
+    "total_windows": 854,
+    "train_windows": 683,
+    "test_windows": 171
+  }
+}

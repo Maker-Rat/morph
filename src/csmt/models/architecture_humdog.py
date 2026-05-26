@@ -647,7 +647,8 @@ class PAN_model(BaseModel):
                         self.retar_ang_loss = self.retar_ang_loss + pitch_loss * _loss_weight('lambda_retar_pitch_rate', 0.0)
                     yaw_rate_src = src_ang[..., -1:]
                     yaw_rate_retar = dst_ang[..., -1:]
-                    retar_yaw_loss = self.mse(yaw_rate_src, yaw_rate_retar)
+                    yaw_rate_scale = _loss_weight('retar_yaw_rate_scale', 1.0)
+                    retar_yaw_loss = self.mse(yaw_rate_src * yaw_rate_scale, yaw_rate_retar)
                     yaw_weight = _loss_weight('lambda_retar_yaw_rate', -1.0)
                     if yaw_weight < 0.0:
                         yaw_weight = float(getattr(self.args, 'lambda_retar_vel', 0.0)) * 1e-1
@@ -655,6 +656,7 @@ class PAN_model(BaseModel):
                     self.loss_recoder.add_scalar('retar_roll_rate_loss_{}_{}'.format(src, dst), roll_loss)
                     self.loss_recoder.add_scalar('retar_pitch_rate_loss_{}_{}'.format(src, dst), pitch_loss)
                     self.loss_recoder.add_scalar('retar_yaw_rate_loss_{}_{}'.format(src, dst), retar_yaw_loss)
+                    self.loss_recoder.add_scalar('retar_yaw_rate_scale_{}_{}'.format(src, dst), yaw_rate_scale)
                     
                     dst_joint_angles = fake_retar_denorm_dst[:, :, :dst_joints]  # [B, T, num_joints]
 

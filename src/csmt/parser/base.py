@@ -79,6 +79,8 @@ def add_losses_options(parser):
                        help="Separate body-y angular velocity matching weight, outside lambda_retar_vel.")
     group.add_argument("--lambda_retar_yaw_rate", type=float, default=-1.0,
                        help="Separate body-z/yaw angular velocity matching weight. <0 preserves legacy 0.1*lambda_retar_vel behavior.")
+    group.add_argument("--retar_yaw_rate_scale", type=float, default=1.0,
+                       help="Fixed scale applied to source yaw/body-z angular rate before retargeted yaw-rate matching.")
 
     group.add_argument('--use_vae', action='store_true', default=False,
                        help='Enable VAE (adds mu/log_var heads and KL loss)')

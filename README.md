@@ -12,6 +12,7 @@ paired SMPL motions + cleaned Go2 PKLs -> SMPL student
 ```
 
 The current student pipelines are direct paired-data pipelines. They train on final target PKLs and do **not** require precomputed distillation shard NPZs.
+The current teacher/corrector pipeline supports both legacy yaw-only root angular features and the newer rpy/body-angular-velocity representation.
 
 ## Environment Setup
 
@@ -87,6 +88,15 @@ python -m csmt.pipelines.create_dataset \
 
 The processed directory contains per-robot normalization stats such as `g1_stats.npz` and `go2_stats.npz`. Keep `--processed-dir` consistent between teacher, corrector, student, and inference.
 
+Root angular representation:
+
+```text
+--root-ang-features yaw   # legacy: root angular feature is yaw rate only
+--root-ang-features rpy   # current: root angular feature is body angular velocity wx, wy, wz
+```
+
+Use one representation consistently for a run family. If you create an rpy processed dataset, train the teacher/corrector/students against that processed directory and use rpy-compatible inference flags where applicable.
+
 ## 3) Train Teacher
 
 ```bash
@@ -102,6 +112,34 @@ python -m csmt.pipelines.train_teacher \
 ```
 
 Teacher runs should contain `refactor_teacher_run.json`; legacy teacher dirs without it are not supported by the current inference utilities.
+
+Teacher loss knobs are usually configured in the pair YAML under `loss_overrides` or passed with `--set key=value`. Useful current knobs:
+
+- `retar_vel_matching`: `direct`, `mapping`, or disabled velocity matching mode
+- `retar_vel_src_vmax_percentile`, `retar_vel_dst_vmax_percentile`: robust speed scales for mapping mode
+- `retar_vel_deadzone`: near-zero speed deadzone for standstill stability
+- `retar_vel_map_z`: whether vertical velocity participates in mapped speed matching
+- `lambda_retar_roll_rate`, `lambda_retar_pitch_rate`, `lambda_retar_yaw_rate`: separate root angular-rate matching weights for rpy datasets
+- `retar_yaw_rate_scale`: fixed scale applied to source yaw/body-z angular rate before yaw-rate matching; `1.0` preserves old behavior, values below/above 1 damp or amplify target turning pressure
+- `lambda_cycle_latent`, `lambda_cycle_fk`, `lambda_cycle_motion`: separated cycle losses
+- `lambda_skating`, `lambda_grounding`, `ground_margin`: teacher physics losses; these can often be kept lighter if a corrector is used later
+
+Example override:
+
+```bash
+python -m csmt.pipelines.train_teacher \
+  --output-root . \
+  --processed-dir ./data/processed/loco_g1_go2_rpy \
+  --task-family locomotion \
+  --pair-id g1_to_go2 \
+  --save-dir ./runs/teacher_loco_g1_go2_rpy \
+  --device cuda:0 \
+  --set retar_vel_matching=mapping \
+  --set retar_vel_src_vmax_percentile=80.0 \
+  --set retar_vel_dst_vmax_percentile=99.0 \
+  --set lambda_retar_yaw_rate=5.0 \
+  --set retar_yaw_rate_scale=0.75
+```
 
 ## 4) Teacher Inference
 
@@ -142,6 +180,7 @@ Useful final-cleaning flags:
 ```text
 --corrector-ckpt ./runs/corrector_loco_g1_go2/best.pt
 --apply-root-skate-comp
+--root-rotation-mode rpy
 ```
 
 If both are used, the output order is:
@@ -149,6 +188,8 @@ If both are used, the output order is:
 ```text
 teacher -> corrector -> root skate compensation -> saved Go2 PKL
 ```
+
+Use `--root-rotation-mode rpy` for rpy teachers/correctors if you want exported root orientation to include roll and pitch. Use `yaw` if you intentionally want yaw-only output/viewing.
 
 ## 5) Corrector: Offline Teacher Cleanup
 
@@ -210,18 +251,21 @@ Important config/CLI knobs:
 
 - `joint_delta_max`: max residual on target joint angles
 - `root_pos_delta_max`: max residual on root trajectory position
-- `yaw_delta_max`: max residual on root yaw
+- `yaw_delta_max`, `root_rot_delta_max`: max residual on yaw-only or roll/pitch/yaw trajectory channels
 - `correct_root_motion`: master switch for root trajectory correction
-- `correct_root_xy`, `correct_root_z`, `correct_root_yaw`: independently enable/disable root channels
+- `correct_root_xy`, `correct_root_z`, `correct_root_roll`, `correct_root_pitch`, `correct_root_yaw`: independently enable/disable root channels
 - `lambda_preserve_joints`: keeps corrected joints close to teacher joints
-- `lambda_preserve_root_vel`: preserves teacher root local velocity/yaw-rate while still allowing direct root-position correction
+- `lambda_preserve_root_vel_xy`, `lambda_preserve_root_vel_z`: preserve teacher root local velocity while still allowing direct root-position correction
+- `lambda_preserve_root_roll_pitch_rate`, `lambda_preserve_root_yaw_rate`: preserve teacher root angular rates in rpy/yaw space
+- `lambda_base_level`: optional level-base penalty for rpy datasets
 - `lambda_grounding`: penalizes floating/penetration during source-gated contact windows
 - `lambda_skating`: penalizes stance-foot sliding
 - `lambda_smooth`: temporal smoothness on residuals
+- `lambda_smooth_joint_vel`, `lambda_smooth_joint_acc`: optional joint velocity/acceleration smoothness
 - `ground_margin`: foot height margin for grounding
 - `physics_ref_frames`: number of initial frames used for physics/reference estimates
 
-The key design choice is that root correction is trajectory-based: the model edits root position/yaw directly, while the preserve-root loss compares the resulting root velocities/yaw-rate against the original teacher motion. This avoids cumulative velocity drift while still allowing the corrector to remove long-horizon floating or sinking.
+The key design choice is that root correction is trajectory-based: the model edits root position and optional roll/pitch/yaw directly, while preserve-root losses compare the resulting velocities/angular rates against the original teacher motion. This avoids cumulative velocity drift while still allowing the corrector to remove long-horizon floating or sinking.
 
 ### 5.2 Generate Cleaned Go2 PKLs
 

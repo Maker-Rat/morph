@@ -6,23 +6,33 @@ correspondence:
   body_groups:
   - name: legs_all
     src_body_indices: [1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15]
-    dst_body_indices: [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
+    dst_body_indices: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
   joint_groups:
   - name: legs_all
     src_joint_indices: [0, 1, 2, 3, 6, 7, 8, 9]
-    dst_joint_indices: [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+    dst_joint_indices: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
 loss_overrides:
-  lambda_skating: 0.5
-  lambda_grounding: 10.0
   lambda_rec: 2.5
   lambda_cycle: 0.1
-  lambda_retar_vel: 100.0
-  lambda_cycle_motion: 100.0
+  lambda_retar_vel: 250.0
+  lambda_cycle_motion: 10.0
+  joint_limit_threshold: 0.85
+  joint_limit_loss_weight: 0.1
+  lambda_skating: 1.0
+  lambda_grounding: 5.0
+  lambda_cycle_latent: 0.5
+  lambda_cycle_fk: 0.1
+  physics_ground_mode: zero_nominal
   retar_vel_matching: mapping
   retar_vel_deadzone: 0.05
   retar_vel_map_z: false
+  lambda_retar_roll_rate: 0.0
+  lambda_retar_pitch_rate: 0.0
+  lambda_retar_yaw_rate: 15.0
+  retar_vel_src_vmax_percentile: 90.0
+  retar_vel_dst_vmax_percentile: 99.0
 indices:
   src_feet: [7, 15]
-  dst_feet: [12, 16, 20, 24]
+  dst_feet: [4, 8, 12, 16, 20, 24]
   src_ee: []
   dst_ee: []

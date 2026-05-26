@@ -26,24 +26,29 @@ correspondence:
     dst_joint_indices: [3, 4, 5]
 
 loss_overrides:
-  lambda_skating: 0.25
-  lambda_grounding: 5.0
-  lambda_ee: 0.05
   lambda_rec: 2.5
-  lambda_cycle: 0.1
-  lambda_cycle_motion: 250.0
+  lambda_cycle: 0.25
+  lambda_retar_vel: 250.0
+  lambda_cycle_motion: 10.0
+  joint_limit_threshold: 0.85
+  joint_limit_loss_weight: 0.1
+  lambda_skating: 0.5
+  lambda_grounding: 5.0
+  lambda_ee: 0.1
+  ee_weight_manip: 1.0
+  ee_weight_locomotion: 0.0
+  lambda_cycle_latent: 0.5
   physics_ground_mode: zero_nominal
   ee_match_mode: disp
   ee_norm_mode: none
-  lambda_retar_vel: 250.0
   retar_vel_matching: mapping
   retar_vel_deadzone: 0.05
   retar_vel_map_z: false
-  ee_weight_manip: 1.0
-  ee_weight_locomotion: 0.05
-  lambda_retar_roll_rate: 1.0
-  lambda_retar_pitch_rate: 1.0
-  lambda_retar_yaw_rate: 15.0
+  lambda_retar_roll_rate: 0.0
+  lambda_retar_pitch_rate: 0.0
+  lambda_retar_yaw_rate: 10.0
+  retar_vel_src_vmax_percentile: 90.0
+  retar_vel_dst_vmax_percentile: 99.0
 indices:
   src_feet: [7, 15]
   dst_feet: [12, 16, 20, 24]

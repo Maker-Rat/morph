@@ -1,11 +1,11 @@
 {
   "robot": {
     "robot_id": "yuna",
-    "stats_path": "/media/marmot/606de469-2f76-4155-82bc-e2e657636ad7/Ritwik/morph/data/processed/loco_g1_yuna/yuna_stats.npz",
-    "train_path": "/media/marmot/606de469-2f76-4155-82bc-e2e657636ad7/Ritwik/morph/data/processed/loco_g1_yuna/yuna_train.npz",
-    "test_path": "/media/marmot/606de469-2f76-4155-82bc-e2e657636ad7/Ritwik/morph/data/processed/loco_g1_yuna/yuna_test.npz",
-    "total_windows": 362,
-    "train_windows": 289,
-    "test_windows": 73
+    "stats_path": "/home/piakchu/Ritwik/morph/data/processed/loco_g1_yuna/yuna_stats.npz",
+    "train_path": "/home/piakchu/Ritwik/morph/data/processed/loco_g1_yuna/yuna_train.npz",
+    "test_path": "/home/piakchu/Ritwik/morph/data/processed/loco_g1_yuna/yuna_test.npz",
+    "total_windows": 376,
+    "train_windows": 300,
+    "test_windows": 76
   }
 }

@@ -17,10 +17,10 @@ dropout: 0.1
 #   rpy data: [joint_angles | root_pos_xyz | roll | pitch | yaw]
 # These max values bound residuals in those units.
 joint_delta_max: 1.0
-root_pos_delta_max: 1.0
+root_pos_delta_max: 2.5
 # For yaw-only datasets this bounds yaw residuals. For rpy datasets this bounds
 # roll, pitch, and yaw residuals unless root_rot_delta_max is overridden.
-yaw_delta_max: 1.0
+yaw_delta_max: 1.5
 root_rot_delta_max: 1.0
 
 # Root trajectory correction switches. Turn these off individually if needed.
@@ -35,23 +35,23 @@ correct_root_yaw: true
 train_seq_len: 0
 eval_seq_len: 0
 
-lambda_preserve_joints: 25.0
+lambda_preserve_joints: 50.0
 # Preserve teacher root local velocity/yaw-rate target from original teacher features.
 # Split so XY locomotion and vertical motion can be tuned independently.
-lambda_preserve_root_vel_xy: 2.5
-lambda_preserve_root_vel_z: 1.0
+lambda_preserve_root_vel_xy: 0.01
+lambda_preserve_root_vel_z: 0.5
 lambda_preserve_root_roll_pitch_rate: 0.0
-lambda_preserve_root_yaw_rate: 0.1
+lambda_preserve_root_yaw_rate: 0.5
 # Penalizes non-level base roll/pitch in trajectory space. Only active for rpy
 # datasets and off by default; tune this against pitch/roll preservation.
 lambda_base_level: 1.0
-lambda_smooth: 0.25
+lambda_smooth: 0.05
 # Optional direct joint temporal regularizers. Keep velocity small/off unless
 # you explicitly want damping; acceleration is usually the safer anti-jitter knob.
-lambda_smooth_joint_vel: 0.25
-lambda_smooth_joint_acc: 0.25
-lambda_skating: 2.5
-lambda_grounding: 10.0
+lambda_smooth_joint_vel: 0.05
+lambda_smooth_joint_acc: 0.05
+lambda_skating: 5.0
+lambda_grounding: 50.0
 lambda_joint_limits: 0.01
 ground_margin: 0.025
 physics_ref_frames: 5

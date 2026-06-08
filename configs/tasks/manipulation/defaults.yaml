@@ -11,3 +11,4 @@ loss_weights:
   lambda_ee: 1.0
   ee_weight_manip: 1.0
   ee_weight_locomotion: 0.0
+  ee_frame: body

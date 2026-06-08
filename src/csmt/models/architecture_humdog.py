@@ -357,13 +357,51 @@ class PAN_model(BaseModel):
                 return False
         return True
 
+    def _compute_body_local_points(self, fk, motion_denorm, link_indices, local_offsets):
+        if len(link_indices) == 0:
+            batch_size, time_steps = motion_denorm.shape[0], motion_denorm.shape[1]
+            return torch.zeros(batch_size, time_steps, 0, 3, device=motion_denorm.device, dtype=motion_denorm.dtype)
+
+        if len(local_offsets) < len(link_indices):
+            local_offsets = list(local_offsets) + [[0.0, 0.0, 0.0] for _ in range(len(link_indices) - len(local_offsets))]
+
+        batch_size, time_steps, _ = motion_denorm.shape
+        joint_angles = motion_denorm[..., :fk.n_joints]
+        joint_angles_flat = joint_angles.reshape(-1, fk.n_joints)
+        fk_result = fk.chain.forward_kinematics(
+            {name: joint_angles_flat[:, i] for i, name in enumerate(fk.joint_names)}
+        )
+
+        base_tf = fk_result[fk.link_names[0]].get_matrix()[:, :3, :]
+        base_rot = base_tf[:, :, :3]
+        base_pos = base_tf[:, :, 3]
+        offsets_t = torch.as_tensor(local_offsets, dtype=motion_denorm.dtype, device=motion_denorm.device)
+
+        ee_points = []
+        for k, link_idx in enumerate(link_indices):
+            idx = int(link_idx)
+            if idx < 0 or idx >= len(fk.link_names):
+                raise IndexError(f"Link index out of range: {idx} for {len(fk.link_names)} links")
+
+            tf = fk_result[fk.link_names[idx]].get_matrix()[:, :3, :]
+            link_rot = tf[:, :, :3]
+            link_pos = tf[:, :, 3]
+            off = offsets_t[k].view(1, 3, 1).expand(link_pos.shape[0], -1, -1)
+            point = link_pos + torch.bmm(link_rot, off).squeeze(-1)
+            point_body = torch.bmm(base_rot.transpose(1, 2), (point - base_pos).unsqueeze(-1)).squeeze(-1)
+            ee_points.append(point_body)
+
+        return torch.stack(ee_points, dim=1).reshape(batch_size, time_steps, len(link_indices), 3)
+
     def _compute_paired_ee_points(self, src_top_idx, dst_top_idx,
                                   src_motion_denorm, dst_motion_denorm,
                                   src_ee_idx, dst_ee_idx,
                                   src_local_cache=None, dst_local_cache=None):
         """
-        Build paired source/destination EE points in base-relative space using FK,
-        with optional per-link local offsets (auto-applied by topology/link name).
+        Build paired source/destination EE points using FK.
+
+        ee_frame='body' returns true instantaneous base-local coordinates.
+        ee_frame='loss' returns the legacy integrated-root loss frame.
         """
         if src_motion_denorm is None or dst_motion_denorm is None:
             return None, None
@@ -398,19 +436,26 @@ class PAN_model(BaseModel):
         if len(src_valid_idx) == 0:
             return None, None
 
-        if src_local_cache is not None and self._offsets_all_zero(src_offsets):
-            src_ee = src_local_cache[:, :, src_valid_idx, :]
-        else:
-            src_ee = fk_src.compute_base_relative_points(
-                src_motion_denorm, src_valid_idx, src_offsets, dt=1.0 / 30.0
-            )
+        ee_frame = str(getattr(self.args, 'ee_frame', 'body')).lower()
+        if ee_frame == 'body':
+            src_ee = self._compute_body_local_points(fk_src, src_motion_denorm, src_valid_idx, src_offsets)
+            dst_ee = self._compute_body_local_points(fk_dst, dst_motion_denorm, dst_valid_idx, dst_offsets)
+        elif ee_frame == 'loss':
+            if src_local_cache is not None and self._offsets_all_zero(src_offsets):
+                src_ee = src_local_cache[:, :, src_valid_idx, :]
+            else:
+                src_ee = fk_src.compute_base_relative_points(
+                    src_motion_denorm, src_valid_idx, src_offsets, dt=1.0 / 30.0
+                )
 
-        if dst_local_cache is not None and self._offsets_all_zero(dst_offsets):
-            dst_ee = dst_local_cache[:, :, dst_valid_idx, :]
+            if dst_local_cache is not None and self._offsets_all_zero(dst_offsets):
+                dst_ee = dst_local_cache[:, :, dst_valid_idx, :]
+            else:
+                dst_ee = fk_dst.compute_base_relative_points(
+                    dst_motion_denorm, dst_valid_idx, dst_offsets, dt=1.0 / 30.0
+                )
         else:
-            dst_ee = fk_dst.compute_base_relative_points(
-                dst_motion_denorm, dst_valid_idx, dst_offsets, dt=1.0 / 30.0
-            )
+            raise ValueError(f"Unsupported ee_frame: {ee_frame}")
         return src_ee, dst_ee
 
     def compute_ee_match_loss(self, src_ee, dst_ee,

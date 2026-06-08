@@ -456,11 +456,174 @@ def _draw_ee_overlay(
     return gidx
 
 
+def _collect_pkl_paths(pkl_dir: Path, glob_pattern: str, recursive: bool) -> list[Path]:
+    if not pkl_dir.exists():
+        raise FileNotFoundError(f"PKL directory does not exist: {pkl_dir}")
+    if not pkl_dir.is_dir():
+        raise NotADirectoryError(f"--pkl-dir must be a directory: {pkl_dir}")
+    iterator = pkl_dir.rglob(glob_pattern) if recursive else pkl_dir.glob(glob_pattern)
+    paths = sorted(p.resolve() for p in iterator if p.is_file())
+    if not paths:
+        raise FileNotFoundError(f"No PKLs matched {glob_pattern!r} in {pkl_dir}")
+    return paths
+
+
+def _load_viewer_clip(path: Path, args: argparse.Namespace) -> dict[str, Any]:
+    dof_pos, root_pos, root_rot, root_heading_rot, fps_from_file = _load_motion(path)
+    original_n_frames = int(dof_pos.shape[0])
+    if original_n_frames == 0:
+        raise ValueError(f"Motion has zero frames: {path}")
+
+    start_frame = max(0, int(args.start_frame))
+    end_frame = int(args.end_frame) if int(args.end_frame) > 0 else original_n_frames
+    end_frame = min(original_n_frames, end_frame)
+    if start_frame >= end_frame:
+        raise ValueError(f"Invalid frame range [{start_frame}, {end_frame}) for {original_n_frames} frames in {path}")
+
+    dof_pos = dof_pos[start_frame:end_frame]
+    root_pos = root_pos[start_frame:end_frame]
+    root_rot = root_rot[start_frame:end_frame]
+    if root_heading_rot is not None:
+        root_heading_rot = root_heading_rot[start_frame:end_frame]
+
+    play_fps = float(args.fps) if args.fps is not None else float(fps_from_file if fps_from_file else 30.0)
+    heading_yaw = None
+    if args.heading_overlay:
+        if args.heading_overlay_mode == "trajectory":
+            heading_yaw = _compute_trajectory_heading(
+                root_pos,
+                smooth_frames=int(args.heading_smooth_frames),
+                min_step=float(args.heading_min_step),
+            )
+        elif args.heading_overlay_mode == "heading_key" and root_heading_rot is not None:
+            heading_yaw = np.asarray([_yaw_from_quat(q, args.quat_convention) for q in root_heading_rot], dtype=np.float32)
+        else:
+            heading_yaw = np.asarray([_yaw_from_quat(q, args.quat_convention) for q in root_rot], dtype=np.float32)
+
+    return {
+        "path": path,
+        "dof_pos": dof_pos,
+        "root_pos": root_pos,
+        "root_rot": root_rot,
+        "root_heading_rot": root_heading_rot,
+        "n_frames": int(dof_pos.shape[0]),
+        "original_n_frames": original_n_frames,
+        "start_frame": start_frame,
+        "end_frame": end_frame,
+        "play_fps": play_fps,
+        "heading_yaw": heading_yaw,
+    }
+
+
+def _run_pkl_playlist(
+    *,
+    args: argparse.Namespace,
+    model: mujoco.MjModel,
+    data: mujoco.MjData,
+    has_free_base: bool,
+    joint_qpos: list[tuple[int, str]],
+    pkl_paths: list[Path],
+) -> None:
+    playlist_idx = [0]
+    frame = [0]
+    paused = [False]
+    show_heading_overlay = [bool(args.heading_overlay)]
+    clip = [_load_viewer_clip(pkl_paths[0], args)]
+
+    n_model_joints = len(joint_qpos)
+
+    def print_clip_status() -> None:
+        c = clip[0]
+        n_motion_joints = int(c["dof_pos"].shape[1])
+        map_dim = min(n_model_joints, n_motion_joints)
+        print(
+            f"[{playlist_idx[0] + 1}/{len(pkl_paths)}] {c['path'].name} | "
+            f"frames={c['n_frames']} range=[{c['start_frame']}, {c['end_frame']})/{c['original_n_frames']} "
+            f"fps={c['play_fps']:.3f} joints motion={n_motion_joints} model={n_model_joints} mapped={map_dim}"
+        )
+        if n_model_joints != n_motion_joints:
+            print("[warn] Motion joint dim does not exactly match model non-free joints; using min(motion, model).")
+
+    def load_index(delta: int) -> None:
+        playlist_idx[0] = (playlist_idx[0] + int(delta)) % len(pkl_paths)
+        clip[0] = _load_viewer_clip(pkl_paths[playlist_idx[0]], args)
+        frame[0] = 0
+        data.qpos[:] = 0.0
+        print_clip_status()
+
+    def apply_frame(k: int) -> None:
+        c = clip[0]
+        dof_pos = c["dof_pos"]
+        root_pos = c["root_pos"]
+        root_rot = c["root_rot"]
+        if has_free_base:
+            data.qpos[0:3] = root_pos[k]
+            data.qpos[3:7] = _to_wxyz(root_rot[k], args.quat_convention)
+        map_dim = min(n_model_joints, int(dof_pos.shape[1]))
+        for i in range(map_dim):
+            qadr, _ = joint_qpos[i]
+            data.qpos[qadr] = dof_pos[k, i]
+        mujoco.mj_forward(model, data)
+
+    def key_callback(key: int) -> None:
+        if key == 32:
+            paused[0] = not paused[0]
+            print("Paused" if paused[0] else "Playing")
+        elif key == ord("r"):
+            frame[0] = 0
+            print("Reset clip")
+        elif key in (ord("n"), ord("N")):
+            load_index(1)
+        elif key in (ord("p"), ord("P")):
+            load_index(-1)
+        elif key in (ord("h"), ord("H")):
+            show_heading_overlay[0] = not show_heading_overlay[0]
+            print("Heading overlay ON" if show_heading_overlay[0] else "Heading overlay OFF")
+
+    print(f"Playlist: {len(pkl_paths)} PKLs")
+    print("Controls: Space play/pause | n next PKL | p previous PKL | r reset clip | h heading overlay")
+    print_clip_status()
+
+    with mujoco.viewer.launch_passive(model, data, key_callback=key_callback) as viewer:
+        viewer.cam.distance = 2.8
+        viewer.cam.azimuth = 45
+        viewer.cam.elevation = -20
+
+        while viewer.is_running():
+            c = clip[0]
+            apply_frame(frame[0])
+            viewer.user_scn.ngeom = 0
+
+            if show_heading_overlay[0]:
+                heading_yaw = c["heading_yaw"]
+                if heading_yaw is None:
+                    yaw_v = _yaw_from_quat(c["root_rot"][frame[0]], args.quat_convention)
+                else:
+                    yaw_v = float(heading_yaw[min(frame[0], len(heading_yaw) - 1)])
+                _draw_heading_overlay(
+                    viewer=viewer,
+                    root_pos=c["root_pos"][frame[0]],
+                    yaw=yaw_v,
+                    length=float(args.heading_arrow_length),
+                    height=float(args.heading_arrow_height),
+                )
+
+            if not paused[0]:
+                frame[0] += 1
+                if frame[0] >= int(c["n_frames"]):
+                    frame[0] = 0
+            viewer.sync()
+            time.sleep(1.0 / max(float(c["play_fps"]), 1e-6))
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Generic robot motion viewer (qpos-based, joint-index order).")
     p.add_argument("--output-root", type=str, default=".")
     p.add_argument("--robot-id", type=str, required=True, help="Robot ID in configs/robots/<robot-id>.yaml")
     p.add_argument("--pkl", type=str, default=None, help="Optional motion PKL path")
+    p.add_argument("--pkl-dir", type=str, default=None, help="Optional folder of motion PKLs to browse with n/p")
+    p.add_argument("--glob", type=str, default="*.pkl", help="Glob used with --pkl-dir")
+    p.add_argument("--recursive", action="store_true", help="Recursively search --pkl-dir")
     p.add_argument("--xml", type=str, default=None, help="Override XML path")
     p.add_argument("--fps", type=float, default=None, help="Playback FPS override")
     p.add_argument("--start-frame", type=int, default=0, help="First frame to visualize, inclusive.")
@@ -535,6 +698,26 @@ def main() -> None:
         print("  viewer controls: press 'c' to toggle contact overlay")
 
     ee_debug = None
+
+    if args.pkl is not None and args.pkl_dir is not None:
+        raise ValueError("Use either --pkl or --pkl-dir, not both.")
+
+    if args.pkl_dir is not None:
+        if contact_debug is not None:
+            print("[warn] --contact-debug-npz is ignored in --pkl-dir playlist mode.")
+        if args.ee_source_pkl is not None:
+            print("[warn] --ee-source-pkl is ignored in --pkl-dir playlist mode.")
+        pkl_dir = Path(args.pkl_dir).expanduser().resolve()
+        pkl_paths = _collect_pkl_paths(pkl_dir, str(args.glob), bool(args.recursive))
+        _run_pkl_playlist(
+            args=args,
+            model=model,
+            data=data,
+            has_free_base=has_free_base,
+            joint_qpos=joint_qpos,
+            pkl_paths=pkl_paths,
+        )
+        return
 
     # No PKL mode: spawn interactive viewer for manual slider/joint testing.
     if args.pkl is None:

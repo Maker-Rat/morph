@@ -170,6 +170,139 @@ def _root_trail_points(motion: MotionArrays, history: list[int], anchor_root: np
 
 # ── Bone overlay (MuJoCo-based) ───────────────────────────────────────────────
 
+BONE_ROLES = (
+    "root",
+    "left_arm",
+    "right_arm",
+    "left_leg",
+    "right_leg",
+    "front_left_leg",
+    "front_right_leg",
+    "rear_left_leg",
+    "rear_right_leg",
+    "middle_left_leg",
+    "middle_right_leg",
+    "manipulator",
+    "other",
+)
+
+CONTACT_POINT_PALETTE = (
+    (0, 235, 80),
+    (0, 190, 255),
+    (255, 215, 40),
+    (255, 70, 120),
+    (130, 255, 90),
+    (145, 95, 255),
+    (255, 135, 20),
+    (30, 255, 215),
+)
+
+EE_POINT_PALETTE = (
+    (255, 95, 0),
+    (190, 40, 255),
+    (255, 220, 35),
+    (0, 210, 255),
+)
+
+
+def _body_name(model: Any, body_id: int) -> str:
+    import mujoco
+    return mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, int(body_id)) or f"body_{body_id}"
+
+
+def _contains_any(text: str, tokens: tuple[str, ...]) -> bool:
+    return any(token in text for token in tokens)
+
+
+def _semantic_bone_role(model: Any, body_id: int, parent_id: int, robot_id: str) -> str:
+    """Map a MuJoCo body edge to anatomical groups for correspondence figures."""
+    child = _body_name(model, body_id).lower()
+    parent = _body_name(model, parent_id).lower() if parent_id >= 0 else ""
+    text = f"{parent} {child}"
+    robot = robot_id.lower()
+
+    # Leg-like names first. Yuna uses shoulder/elbow terms for leg links
+    # (for example base_1FL_shoulder), so generic arm tokens must come later.
+    if _contains_any(text, ("fl_", "front_left", "lf_", "left_front", "1fl")):
+        return "front_left_leg"
+    if _contains_any(text, ("fr_", "front_right", "rf_", "right_front", "2fr")):
+        return "front_right_leg"
+    if _contains_any(text, ("rl_", "rear_left", "hind_left", "lh_", "left_hind", "bl_", "back_left", "5bl")):
+        return "rear_left_leg"
+    if _contains_any(text, ("rr_", "rear_right", "hind_right", "rh_", "right_hind", "br_", "back_right", "6br")):
+        return "rear_right_leg"
+    if _contains_any(text, ("ml_", "middle_left", "3ml")):
+        return "middle_left_leg"
+    if _contains_any(text, ("mr_", "middle_right", "4mr")):
+        return "middle_right_leg"
+
+    if _contains_any(text, ("left_hip", "left_knee", "left_ankle", "left_foot", "left_leg")):
+        return "left_leg"
+    if _contains_any(text, ("right_hip", "right_knee", "right_ankle", "right_foot", "right_leg")):
+        return "right_leg"
+    if _contains_any(text, ("hip", "thigh", "calf", "knee", "ankle", "foot", "toe", "leg")):
+        if _contains_any(text, ("left", "_l_", " l_")):
+            return "left_leg"
+        if _contains_any(text, ("right", "_r_", " r_")):
+            return "right_leg"
+        return "other"
+
+    # B2-Z1 / Go2-arm XMLs often name the manipulator bodies link00..link06. This is
+    # an arm segment, while the gripper/end-effector itself is drawn separately as a sphere.
+    if ("z1" in robot or "arm" in robot) and (
+        child.startswith("link") or parent.startswith("link")
+    ):
+        return "manipulator"
+    if _contains_any(text, ("gripper", "tool", "end_effector", "end-effector")):
+        return "manipulator"
+
+    if _contains_any(text, ("left_shoulder", "left_elbow", "left_wrist", "left_hand", "left_arm")):
+        return "left_arm"
+    if _contains_any(text, ("right_shoulder", "right_elbow", "right_wrist", "right_hand", "right_arm")):
+        return "right_arm"
+    if _contains_any(text, ("shoulder", "elbow", "wrist", "hand", "arm", "palm", "finger")):
+        if _contains_any(text, ("left", "_l_", " l_")):
+            return "left_arm"
+        if _contains_any(text, ("right", "_r_", " r_")):
+            return "right_arm"
+        return "manipulator"
+
+    root_tokens = ("base", "base_link", "trunk", "torso", "pelvis", "waist", "chest", "root")
+    if _contains_any(text, root_tokens):
+        return "root"
+    return "other"
+
+
+def _body_line_segments_by_role(
+    model: Any,
+    data: Any,
+    robot_id: str,
+    include_other: bool = True,
+) -> dict[str, np.ndarray]:
+    import mujoco
+    grouped: dict[str, list[list[np.ndarray]]] = {role: [] for role in BONE_ROLES}
+    for body_id in range(1, model.nbody):
+        parent = int(model.body_parentid[body_id])
+        if parent <= 0:
+            continue
+        name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, body_id) or ""
+        if any(s in name.lower() for s in ("mocap", "imu", "contour")):
+            continue
+        p0 = data.xpos[parent].copy()
+        p1 = data.xpos[body_id].copy()
+        if float(np.linalg.norm(p1 - p0)) < 0.025:
+            continue
+        role = _semantic_bone_role(model, body_id, parent, robot_id)
+        if role == "other" and not include_other:
+            continue
+        grouped[role].append([p0, p1])
+
+    return {
+        role: np.asarray(segs, dtype=np.float32)
+        for role, segs in grouped.items()
+        if len(segs) > 0
+    }
+
 def _body_line_segments(model: Any, data: Any) -> np.ndarray:
     import mujoco
     segs = []
@@ -367,6 +500,15 @@ def _wxyz_to_matrix(q: np.ndarray) -> np.ndarray:
     )
 
 
+def _heading_forward_xy(root_rot_xyzw: np.ndarray) -> np.ndarray:
+    rot = _wxyz_to_matrix(_to_wxyz(root_rot_xyzw))
+    forward = np.asarray(rot[:2, 0], dtype=np.float64)
+    norm = float(np.linalg.norm(forward))
+    if norm < 1e-8:
+        return np.array([1.0, 0.0], dtype=np.float64)
+    return forward / norm
+
+
 def _visual_geoms_by_body(model: Any) -> dict[int, list[int]]:
     out: dict[int, list[int]] = {}
     for geom_id in _render_geom_ids(model):
@@ -397,6 +539,7 @@ def _create_mujoco_render_handles(
     data: Any,
     mesh_saturation: float,
     mesh_value: float,
+    robot_opacity: float = 1.0,
 ) -> list[MujocoGeomHandle]:
     handles: list[MujocoGeomHandle] = []
     visual_geom_ids = _render_geom_ids(model)
@@ -426,14 +569,29 @@ def _create_mujoco_render_handles(
                 color=tuple(int(c) for c in (rgba[:3] * 255.0).astype(np.uint8)),
                 material="standard",
                 flat_shading=False,
+                opacity=float(np.clip(robot_opacity, 0.0, 1.0)),
                 position=data.geom_xpos[geom_id].astype(np.float64),
                 wxyz=_wxyz_from_matrix(data.geom_xmat[geom_id]),
                 cast_shadow=True,
                 receive_shadow=True,
             )
+        _set_handle_opacity(handle, robot_opacity)
         handles.append(MujocoGeomHandle(geom_id=geom_id, handle=handle))
     print(f"MuJoCo visual geoms: {len(handles)}")
     return handles
+
+
+def _set_handle_opacity(handle: Any, opacity: float) -> None:
+    value = float(np.clip(opacity, 0.0, 1.0))
+    try:
+        handle.opacity = value
+    except Exception:
+        pass
+
+
+def _set_mujoco_handles_opacity(handles: list[MujocoGeomHandle], opacity: float) -> None:
+    for item in handles:
+        _set_handle_opacity(item.handle, opacity)
 
 
 def _boost_mesh_colors(mesh: Any, saturation: float, value: float) -> None:
@@ -576,10 +734,18 @@ def _resolve_foot_points(model: Any, requested: list[str] | None = None) -> list
         return points
 
     foot_body_names: list[str] = []
+    foot_tokens = (
+        "fl", "fr", "rl", "rr",
+        "lf", "rf", "lh", "rh",
+        "ml", "mr", "bl", "br",
+        "front", "rear", "hind", "back",
+        "left", "right",
+        "end",
+    )
     for body_id in range(model.nbody):
         body_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, body_id) or ""
         low = body_name.lower()
-        if "foot" in low and any(token in low for token in ("fl", "fr", "ml", "mr", "bl", "br", "end")):
+        if "foot" in low and any(token in low for token in foot_tokens):
             foot_body_names.append(body_name)
     if foot_body_names:
         for body_name in sorted(foot_body_names):
@@ -606,6 +772,64 @@ def _foot_position(data: Any, point: FootPoint) -> np.ndarray:
     if point.kind == "geom":
         return np.asarray(data.geom_xpos[point.idx], dtype=np.float64)
     return np.asarray(data.xpos[point.idx], dtype=np.float64)
+
+
+def _resolve_named_points(model: Any, names: list[str] | None, label: str) -> list[FootPoint]:
+    import mujoco
+    points: list[FootPoint] = []
+    if not names:
+        return points
+    for name in names:
+        geom_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, name)
+        if geom_id >= 0:
+            points.append(FootPoint(name=name, kind="geom", idx=int(geom_id)))
+            continue
+        body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, name)
+        if body_id >= 0:
+            points.append(FootPoint(name=name, kind="body", idx=int(body_id)))
+            continue
+        print(f"[warn] {label} marker target not found as geom/body: {name}")
+    return points
+
+
+def _resolve_ee_points(model: Any, requested: list[str] | None = None) -> list[FootPoint]:
+    import mujoco
+
+    requested_points = _resolve_named_points(model, requested, "end-effector")
+    if requested_points:
+        return requested_points
+
+    points: list[FootPoint] = []
+    for side in ("left", "right"):
+        candidates: list[tuple[int, str]] = []
+        for body_id in range(model.nbody):
+            body_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, body_id) or ""
+            low = body_name.lower()
+            if side in low and any(token in low for token in ("hand", "palm", "wrist", "finger")):
+                priority = 0 if "hand" in low or "palm" in low else 1 if "wrist" in low else 2
+                candidates.append((priority, body_name))
+        if candidates:
+            _, body_name = sorted(candidates)[0]
+            body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body_name)
+            points.append(FootPoint(name=body_name, kind="body", idx=int(body_id)))
+
+    if points:
+        return points
+
+    # Single manipulator targets, e.g. B2-Z1 / Go2-arm.
+    candidates: list[tuple[int, str]] = []
+    for body_id in range(model.nbody):
+        body_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, body_id) or ""
+        low = body_name.lower()
+        if any(token in low for token in ("gripper", "tool", "end_effector", "end-effector")):
+            priority = 0 if "gripper" in low or "tool" in low else 1
+            candidates.append((priority, body_name))
+        elif low.startswith("link06") or low.endswith("link06"):
+            candidates.append((2, body_name))
+    for _, body_name in sorted(candidates)[:2]:
+        body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body_name)
+        points.append(FootPoint(name=body_name, kind="body", idx=int(body_id)))
+    return points
 
 
 def _foot_positions_at_frame(
@@ -642,6 +866,31 @@ def _foot_contact_status(
     return "swing", xy_speed
 
 
+def _slip_arrow_segments(
+    start: np.ndarray,
+    end: np.ndarray,
+    head_len: float,
+    head_width: float,
+) -> list[list[np.ndarray]]:
+    """Build line segments for a floor-plane arrow from start to end."""
+    start = np.asarray(start, dtype=np.float32)
+    end = np.asarray(end, dtype=np.float32)
+    delta = end - start
+    delta[2] = 0.0
+    length = float(np.linalg.norm(delta[:2]))
+    if length < 1e-6:
+        return []
+
+    direction = delta / length
+    perp = np.array([-direction[1], direction[0], 0.0], dtype=np.float32)
+    head_len = min(float(head_len), 0.45 * length)
+    head_width = float(head_width)
+    base = end - direction * head_len
+    left = base + perp * head_width
+    right = base - perp * head_width
+    return [[start, end], [end, left], [end, right]]
+
+
 # ── Args ──────────────────────────────────────────────────────────────────────
 
 def parse_args() -> argparse.Namespace:
@@ -670,6 +919,7 @@ def parse_args() -> argparse.Namespace:
     # ── Mesh color boost for non-textured/simple geoms ───────────────────────
     p.add_argument("--mesh-saturation", type=float, default=1.0)
     p.add_argument("--mesh-value", type=float, default=0.78)
+    p.add_argument("--robot-opacity", type=float, default=1.0)
     # ── Ghost meshes ─────────────────────────────────────────────────────────
     p.add_argument("--ghost", action="store_true")
     p.add_argument("--ghost-frames", type=int, default=3, help="Ghost slot count")
@@ -690,18 +940,53 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--bone-overlay", action="store_true", help="Show MuJoCo skeleton lines (debug)")
     p.add_argument("--bone-color", type=int, nargs=3, default=(80, 160, 255))
     p.add_argument("--bone-width", type=float, default=2.0)
+    p.add_argument("--hide-other-bones", action="store_true", help="Hide unclassified bones outside the anatomical groups")
+    p.add_argument("--bone-root-color", type=int, nargs=3, default=(65, 145, 255))
+    p.add_argument("--bone-left-arm-color", type=int, nargs=3, default=(255, 155, 35))
+    p.add_argument("--bone-right-arm-color", type=int, nargs=3, default=(185, 105, 255))
+    p.add_argument("--bone-left-leg-color", type=int, nargs=3, default=(25, 180, 85))
+    p.add_argument("--bone-right-leg-color", type=int, nargs=3, default=(40, 175, 215))
+    p.add_argument("--bone-front-left-leg-color", type=int, nargs=3, default=(25, 180, 85))
+    p.add_argument("--bone-front-right-leg-color", type=int, nargs=3, default=(40, 175, 215))
+    p.add_argument("--bone-rear-left-leg-color", type=int, nargs=3, default=(255, 205, 65))
+    p.add_argument("--bone-rear-right-leg-color", type=int, nargs=3, default=(235, 95, 120))
+    p.add_argument("--bone-middle-left-leg-color", type=int, nargs=3, default=(120, 210, 85))
+    p.add_argument("--bone-middle-right-leg-color", type=int, nargs=3, default=(80, 190, 235))
+    p.add_argument("--bone-manipulator-color", type=int, nargs=3, default=(255, 155, 35))
+    p.add_argument("--bone-other-color", type=int, nargs=3, default=(145, 150, 160))
+    p.add_argument("--bone-root-width", type=float, default=4.0)
+    p.add_argument("--bone-limb-width", type=float, default=4.5)
+    p.add_argument("--bone-manipulator-width", type=float, default=4.5)
+    p.add_argument("--bone-other-width", type=float, default=1.4)
+    p.add_argument("--correspondence-points", action="store_true", help="Show contact/end-effector correspondence spheres")
+    p.add_argument("--ee-points", nargs="*", default=None, help="Optional geom/body names for end-effector markers")
+    p.add_argument("--correspondence-contact-color", type=int, nargs=3, default=(25, 180, 85))
+    p.add_argument("--correspondence-ee-color", type=int, nargs=3, default=(255, 155, 35))
+    p.add_argument("--correspondence-point-radius", type=float, default=0.045)
+    p.add_argument("--correspondence-point-opacity", type=float, default=1.0)
     # ── Foot contact / slip overlay ──────────────────────────────────────────
     p.add_argument("--foot-contacts", action="store_true", help="Show foot contact markers")
     p.add_argument("--foot-points", nargs="*", default=None, help="Optional geom/body names for feet")
     p.add_argument("--foot-contact-height", type=float, default=0.05)
     p.add_argument("--foot-penetration-depth", type=float, default=0.015)
     p.add_argument("--foot-slip-speed", type=float, default=0.18)
-    p.add_argument("--foot-marker-radius", type=float, default=0.055)
+    p.add_argument("--foot-marker-radius", type=float, default=0.03)
     p.add_argument("--foot-marker-opacity", type=float, default=1.0)
     p.add_argument("--foot-contact-color", type=int, nargs=3, default=(0, 190, 75))
     p.add_argument("--foot-error-color", type=int, nargs=3, default=(255, 45, 20))
-    p.add_argument("--foot-slip-vectors", action="store_true", help="Draw red floor streaks for lateral slip")
+    p.add_argument("--foot-slip-vectors", action="store_true", help="Draw red floor arrows for lateral slip")
     p.add_argument("--foot-slip-width", type=float, default=8.0)
+    p.add_argument("--foot-slip-arrow-head-len", type=float, default=0.06)
+    p.add_argument("--foot-slip-arrow-head-width", type=float, default=0.035)
+    p.add_argument(
+        "--foot-ground-mode",
+        choices=["adaptive", "fixed"],
+        default="adaptive",
+        help=(
+            "adaptive estimates ground from the lowest foot at the current frame, "
+            "which is more robust to long-horizon root height drift. fixed uses z=0."
+        ),
+    )
     # ── Root anchor ──────────────────────────────────────────────────────────
     p.add_argument("--anchor-root", action="store_true", default=True)
     p.add_argument("--no-anchor-root", dest="anchor_root", action="store_false")
@@ -831,6 +1116,7 @@ def main() -> None:
         data,
         mesh_saturation=float(args.mesh_saturation),
         mesh_value=float(args.mesh_value),
+        robot_opacity=float(args.robot_opacity),
     )
 
     def _update_primary(frame: int) -> None:
@@ -849,23 +1135,19 @@ def main() -> None:
 
     # ── Overlay state ─────────────────────────────────────────────────────────
     show_bones = [bool(args.bone_overlay)]
+    show_correspondence_points = [bool(args.correspondence_points)]
     show_ghosts = [bool(args.ghost)]
     show_ghost_traj = [bool(args.ghost_trajectory)]
     show_foot_contacts = [bool(args.foot_contacts)]
     show_foot_slip_vectors = [bool(args.foot_slip_vectors)]
     ghost_stride = [max(1, int(args.ghost_stride))]
-    bone_handle = None
+    bone_handles: dict[str, Any] = {}
+    correspondence_handles: list[Any] = []
     trail_handle = None
     foot_slip_handle = None
 
-    if show_bones[0]:
-        bone_handle = server.scene.add_line_segments(
-            "/overlay/bones", _body_line_segments(model, data),
-            colors=tuple(int(c) for c in args.bone_color),
-            line_width=float(args.bone_width),
-        )
-
     foot_points = _resolve_foot_points(model, args.foot_points)
+    ee_points = _resolve_ee_points(model, args.ee_points)
     foot_scratch = mujoco.MjData(model)
     if args.foot_contacts:
         print(f"Foot markers: {[p.name for p in foot_points]}")
@@ -901,6 +1183,17 @@ def main() -> None:
 
     marker_handles = create_marker_handles(foot_points)
 
+    def _compute_camera_offsets() -> tuple[np.ndarray, np.ndarray]:
+        extent_xy = np.ptp(motion.root_pos[:, :2] - anchor_root[:2], axis=0) if n_frames > 1 else np.ones(2)
+        cam_dist = float(max(2.4, np.linalg.norm(extent_xy) * 0.6 + 2.0))
+        return np.array([1.8, -cam_dist, 1.35], dtype=np.float64), np.array([0.0, 0.0, 0.55], dtype=np.float64)
+
+    camera_position_offset, camera_look_offset = _compute_camera_offsets()
+    default_follow_distance = 1.9
+    default_follow_height = 0.75
+    default_follow_look_height = 0.35
+    default_follow_angle_deg = 0.0
+
     # ── GUI ───────────────────────────────────────────────────────────────────
     with server.gui.add_folder("Load Motion", expand_by_default=True):
         robot_text = server.gui.add_text("Robot ID", initial_value=args.robot_id)
@@ -915,11 +1208,76 @@ def main() -> None:
                                          initial_value=state.frame)
     speed_slider = server.gui.add_slider("Speed", min=0.05, max=3.0, step=0.05,
                                           initial_value=float(args.speed))
-    bone_cb = server.gui.add_checkbox("Bone Overlay", initial_value=show_bones[0])
+    with server.gui.add_folder("Camera", expand_by_default=False):
+        follow_camera_cb = server.gui.add_checkbox("Follow Robot", initial_value=False)
+        follow_angle_slider = server.gui.add_slider(
+            "Follow Angle", min=-180.0, max=180.0, step=5.0, initial_value=default_follow_angle_deg
+        )
+        follow_distance_slider = server.gui.add_slider(
+            "Follow Distance", min=0.6, max=5.0, step=0.05, initial_value=default_follow_distance
+        )
+        follow_height_slider = server.gui.add_slider(
+            "Follow Height", min=0.2, max=2.5, step=0.05, initial_value=default_follow_height
+        )
+        follow_look_height_slider = server.gui.add_slider(
+            "Look Height", min=0.0, max=1.5, step=0.05, initial_value=default_follow_look_height
+        )
+    with server.gui.add_folder("Appearance", expand_by_default=False):
+        robot_opacity_slider = server.gui.add_slider(
+            "Robot Opacity", min=0.05, max=1.0, step=0.01,
+            initial_value=float(np.clip(args.robot_opacity, 0.05, 1.0)),
+        )
+        bone_cb = server.gui.add_checkbox("Bone Overlay", initial_value=show_bones[0])
+        other_bone_cb = server.gui.add_checkbox("Other Bones", initial_value=not bool(args.hide_other_bones))
+        correspondence_cb = server.gui.add_checkbox(
+            "Correspondence Points", initial_value=show_correspondence_points[0]
+        )
+        bone_root_color = server.gui.add_rgb("Root Color", initial_value=tuple(int(c) for c in args.bone_root_color))
+        bone_left_arm_color = server.gui.add_rgb("Left Arm Color", initial_value=tuple(int(c) for c in args.bone_left_arm_color))
+        bone_right_arm_color = server.gui.add_rgb("Right Arm Color", initial_value=tuple(int(c) for c in args.bone_right_arm_color))
+        bone_left_leg_color = server.gui.add_rgb("Left Leg Color", initial_value=tuple(int(c) for c in args.bone_left_leg_color))
+        bone_right_leg_color = server.gui.add_rgb("Right Leg Color", initial_value=tuple(int(c) for c in args.bone_right_leg_color))
+        bone_front_left_leg_color = server.gui.add_rgb("Front Left Leg Color", initial_value=tuple(int(c) for c in args.bone_front_left_leg_color))
+        bone_front_right_leg_color = server.gui.add_rgb("Front Right Leg Color", initial_value=tuple(int(c) for c in args.bone_front_right_leg_color))
+        bone_rear_left_leg_color = server.gui.add_rgb("Rear Left Leg Color", initial_value=tuple(int(c) for c in args.bone_rear_left_leg_color))
+        bone_rear_right_leg_color = server.gui.add_rgb("Rear Right Leg Color", initial_value=tuple(int(c) for c in args.bone_rear_right_leg_color))
+        bone_middle_left_leg_color = server.gui.add_rgb("Middle Left Leg Color", initial_value=tuple(int(c) for c in args.bone_middle_left_leg_color))
+        bone_middle_right_leg_color = server.gui.add_rgb("Middle Right Leg Color", initial_value=tuple(int(c) for c in args.bone_middle_right_leg_color))
+        bone_manipulator_color = server.gui.add_rgb("Manipulator Color", initial_value=tuple(int(c) for c in args.bone_manipulator_color))
+        bone_other_color = server.gui.add_rgb("Other Color", initial_value=tuple(int(c) for c in args.bone_other_color))
+        point_contact_color = server.gui.add_rgb("Contact Point Color", initial_value=tuple(int(c) for c in args.correspondence_contact_color))
+        point_ee_color = server.gui.add_rgb("EE Point Color", initial_value=tuple(int(c) for c in args.correspondence_ee_color))
+        contact_point_color_controls = []
+        ee_point_color_controls = []
+        max_contact_color_controls = max(8, len(foot_points))
+        max_ee_color_controls = max(4, len(ee_points))
+        with server.gui.add_folder("Individual Contact Points", expand_by_default=False):
+            for idx in range(max_contact_color_controls):
+                default = CONTACT_POINT_PALETTE[idx % len(CONTACT_POINT_PALETTE)]
+                contact_point_color_controls.append(
+                    server.gui.add_rgb(f"Contact {idx + 1}", initial_value=default)
+                )
+        with server.gui.add_folder("Individual End-Effectors", expand_by_default=False):
+            for idx in range(max_ee_color_controls):
+                default = EE_POINT_PALETTE[idx % len(EE_POINT_PALETTE)]
+                ee_point_color_controls.append(
+                    server.gui.add_rgb(f"EE {idx + 1}", initial_value=default)
+                )
+        correspondence_label_md = server.gui.add_markdown("")
+        bone_root_width = server.gui.add_slider("Root Width", min=0.5, max=12.0, step=0.1,
+                                                initial_value=float(args.bone_root_width))
+        bone_limb_width = server.gui.add_slider("Limb Width", min=0.5, max=12.0, step=0.1,
+                                                initial_value=float(args.bone_limb_width))
+        bone_manipulator_width = server.gui.add_slider("Manipulator Width", min=0.5, max=12.0, step=0.1,
+                                                       initial_value=float(args.bone_manipulator_width))
+        bone_other_width = server.gui.add_slider("Other Width", min=0.5, max=8.0, step=0.1,
+                                                 initial_value=float(args.bone_other_width))
+        point_radius_slider = server.gui.add_slider("Point Radius", min=0.01, max=0.12, step=0.005,
+                                                    initial_value=float(args.correspondence_point_radius))
     ghost_cb = server.gui.add_checkbox("Ghost Meshes", initial_value=show_ghosts[0])
     ghost_traj_cb = server.gui.add_checkbox("Ghost Trajectory", initial_value=show_ghost_traj[0])
     foot_cb = server.gui.add_checkbox("Foot Contacts", initial_value=show_foot_contacts[0])
-    slip_cb = server.gui.add_checkbox("Slip Vectors", initial_value=show_foot_slip_vectors[0])
+    slip_cb = server.gui.add_checkbox("Slip Arrows", initial_value=show_foot_slip_vectors[0])
     active_ghost_slider = server.gui.add_slider(
         "Ghost Frames", min=0, max=max_ghost_frames, step=1,
         initial_value=min(int(args.ghost_frames), max_ghost_frames) if show_ghosts[0] else 0,
@@ -935,6 +1293,151 @@ def main() -> None:
     next_cmd = server.gui.add_command("Next Frame", hotkey="n")
 
     # ── Frame update ──────────────────────────────────────────────────────────
+
+    def _rgb_value(handle: Any) -> tuple[int, int, int]:
+        return tuple(int(np.clip(v, 0, 255)) for v in handle.value)
+
+    def _indexed_rgb_value(controls: list[Any], idx: int, fallback: Any) -> tuple[int, int, int]:
+        if 0 <= int(idx) < len(controls):
+            return _rgb_value(controls[int(idx)])
+        return _rgb_value(fallback)
+
+    def _correspondence_label_text() -> str:
+        contact_items = [f"`Contact {i + 1}` = `{point.name}`" for i, point in enumerate(foot_points)]
+        ee_items = [f"`EE {i + 1}` = `{point.name}`" for i, point in enumerate(ee_points)]
+        parts = []
+        if contact_items:
+            parts.append("Contacts: " + ", ".join(contact_items))
+        if ee_items:
+            parts.append("End-effectors: " + ", ".join(ee_items))
+        return "Correspondence point map: " + " · ".join(parts) if parts else "Correspondence point map: none resolved."
+
+    def _current_bone_styles() -> dict[str, tuple[tuple[int, int, int], float]]:
+        limb_width = float(bone_limb_width.value)
+        return {
+            "root": (_rgb_value(bone_root_color), float(bone_root_width.value)),
+            "left_arm": (_rgb_value(bone_left_arm_color), limb_width),
+            "right_arm": (_rgb_value(bone_right_arm_color), limb_width),
+            "left_leg": (_rgb_value(bone_left_leg_color), limb_width),
+            "right_leg": (_rgb_value(bone_right_leg_color), limb_width),
+            "front_left_leg": (_rgb_value(bone_front_left_leg_color), limb_width),
+            "front_right_leg": (_rgb_value(bone_front_right_leg_color), limb_width),
+            "rear_left_leg": (_rgb_value(bone_rear_left_leg_color), limb_width),
+            "rear_right_leg": (_rgb_value(bone_rear_right_leg_color), limb_width),
+            "middle_left_leg": (_rgb_value(bone_middle_left_leg_color), limb_width),
+            "middle_right_leg": (_rgb_value(bone_middle_right_leg_color), limb_width),
+            "manipulator": (_rgb_value(bone_manipulator_color), float(bone_manipulator_width.value)),
+            "other": (_rgb_value(bone_other_color), float(bone_other_width.value)),
+        }
+
+    def remove_bone_handles() -> None:
+        nonlocal bone_handles
+        for handle in bone_handles.values():
+            handle.remove()
+        bone_handles = {}
+
+    def update_bones() -> None:
+        nonlocal bone_handles
+        remove_bone_handles()
+        if not show_bones[0]:
+            return
+        groups = _body_line_segments_by_role(
+            model,
+            data,
+            robot_id=str(robot_text.value),
+            include_other=bool(other_bone_cb.value),
+        )
+        styles = _current_bone_styles()
+        for role in BONE_ROLES:
+            segs = groups.get(role)
+            if segs is None or segs.shape[0] == 0:
+                continue
+            color, width = styles[role]
+            bone_handles[role] = server.scene.add_line_segments(
+                f"/overlay/bones/{role}",
+                segs,
+                colors=color,
+                line_width=width,
+            )
+
+    def remove_correspondence_handles() -> None:
+        nonlocal correspondence_handles
+        for handle in correspondence_handles:
+            handle.remove()
+        correspondence_handles = []
+
+    def update_correspondence_points() -> None:
+        nonlocal correspondence_handles
+        remove_correspondence_handles()
+        if not show_correspondence_points[0]:
+            return
+        radius = float(point_radius_slider.value)
+        opacity = float(np.clip(args.correspondence_point_opacity, 0.0, 1.0))
+        for idx, point in enumerate(foot_points):
+            correspondence_handles.append(
+                server.scene.add_icosphere(
+                    f"/overlay/correspondence/contact_{idx}_{point.name}",
+                    radius=radius,
+                    color=_indexed_rgb_value(contact_point_color_controls, idx, point_contact_color),
+                    opacity=opacity,
+                    subdivisions=2,
+                    material="toon5",
+                    flat_shading=True,
+                    position=_foot_position(data, point),
+                    visible=True,
+                    cast_shadow=False,
+                    receive_shadow=False,
+                )
+            )
+        for idx, point in enumerate(ee_points):
+            correspondence_handles.append(
+                server.scene.add_icosphere(
+                    f"/overlay/correspondence/ee_{idx}_{point.name}",
+                    radius=radius,
+                    color=_indexed_rgb_value(ee_point_color_controls, idx, point_ee_color),
+                    opacity=opacity,
+                    subdivisions=2,
+                    material="toon5",
+                    flat_shading=True,
+                    position=_foot_position(data, point),
+                    visible=True,
+                    cast_shadow=False,
+                    receive_shadow=False,
+                )
+            )
+
+    correspondence_label_md.content = _correspondence_label_text()
+
+    def update_follow_camera() -> None:
+        if not bool(follow_camera_cb.value):
+            return
+        root = np.asarray(motion.root_pos[state.frame] - anchor_root, dtype=np.float64)
+        forward_xy = _heading_forward_xy(motion.root_rot[state.frame])
+        distance = float(follow_distance_slider.value)
+        height = float(follow_height_slider.value)
+        look_height = float(follow_look_height_slider.value)
+        angle = np.deg2rad(float(follow_angle_slider.value))
+        c, s = float(np.cos(angle)), float(np.sin(angle))
+        chase_xy = np.array(
+            [
+                -forward_xy[0] * c - -forward_xy[1] * s,
+                -forward_xy[0] * s + -forward_xy[1] * c,
+            ],
+            dtype=np.float64,
+        )
+        position = root + np.array([chase_xy[0] * distance, chase_xy[1] * distance, height], dtype=np.float64)
+        look_at = root + np.array([forward_xy[0] * 0.25, forward_xy[1] * 0.25, look_height], dtype=np.float64)
+        try:
+            clients = server.get_clients()
+        except AttributeError:
+            return
+        for client in clients.values():
+            try:
+                client.camera.position = position
+                client.camera.look_at = look_at
+                client.camera.up_direction = np.array([0.0, 0.0, 1.0])
+            except Exception:
+                pass
 
     def update_ghosts() -> None:
         nonlocal trail_handle
@@ -989,34 +1492,47 @@ def main() -> None:
             model, foot_scratch, motion, joint_qpos, ref_frame, anchor_root, foot_points
         )
         slip_segments: list[list[np.ndarray]] = []
+        cur_positions = [_foot_position(data, point).copy() for point in foot_points]
+        if args.foot_ground_mode == "adaptive" and cur_positions:
+            floor_z = float(min(float(pos[2]) for pos in cur_positions))
+        else:
+            floor_z = 0.0
 
         for foot_idx, point in enumerate(foot_points):
-            pos = _foot_position(data, point)
+            pos = cur_positions[foot_idx]
             ref_pos = ref_positions[foot_idx]
             status, xy_speed = _foot_contact_status(
                 pos=pos,
                 ref_pos=ref_pos,
                 fps=fps,
-                floor_z=0.0,
+                floor_z=floor_z,
                 contact_height=float(args.foot_contact_height),
                 penetration_depth=float(args.foot_penetration_depth),
                 slip_speed=float(args.foot_slip_speed),
             )
             marker_pos = pos.copy()
             if status in ("contact", "slip", "penetration"):
-                marker_pos[2] = max(0.0, min(float(pos[2]), float(args.foot_contact_height))) + 0.015
+                marker_pos[2] = max(floor_z, min(float(pos[2]), floor_z + float(args.foot_contact_height))) + 0.015
             for name, handle in marker_handles[foot_idx].items():
                 handle.position = marker_pos
                 handle.visible = name == status
 
             if status == "slip" and show_foot_slip_vectors[0]:
-                start = np.array([ref_pos[0], ref_pos[1], 0.025], dtype=np.float32)
-                end = np.array([pos[0], pos[1], 0.025], dtype=np.float32)
+                arrow_z = float(floor_z) + 0.025
+                start = np.array([ref_pos[0], ref_pos[1], arrow_z], dtype=np.float32)
+                end = np.array([pos[0], pos[1], arrow_z], dtype=np.float32)
                 if float(np.linalg.norm(end[:2] - start[:2])) > 1e-4:
                     direction = end - start
                     scale = min(3.0, max(1.0, xy_speed / max(float(args.foot_slip_speed), 1e-6)))
                     end = start + direction * scale
-                    slip_segments.append([start, end])
+                    slip_segments.extend(
+                        _slip_arrow_segments(
+                            start,
+                            end,
+                            head_len=float(args.foot_slip_arrow_head_len),
+                            head_width=float(args.foot_slip_arrow_head_width),
+                        )
+                    )
 
         if slip_segments:
             foot_slip_handle = server.scene.add_line_segments(
@@ -1027,7 +1543,6 @@ def main() -> None:
             )
 
     def set_frame(frame: int, record_history: bool = True) -> None:
-        nonlocal bone_handle
         raw_frame = int(frame)
         with lock:
             prev_frame = state.frame
@@ -1047,24 +1562,18 @@ def main() -> None:
             _apply_motion_frame(model, data, motion, joint_qpos, state.frame, anchor_root)
             _update_primary(state.frame)
 
-            if bone_handle is not None:
-                bone_handle.remove()
-                bone_handle = None
-            if show_bones[0]:
-                bone_handle = server.scene.add_line_segments(
-                    "/overlay/bones", _body_line_segments(model, data),
-                    colors=tuple(int(c) for c in args.bone_color),
-                    line_width=float(args.bone_width),
-                )
+            update_bones()
+            update_correspondence_points()
             update_ghosts()
             update_foot_contacts()
             frame_slider.value = state.frame
+            update_follow_camera()
 
     def step(delta: int) -> None:
         set_frame(state.frame + int(delta))
 
     def remove_scene_handles() -> None:
-        nonlocal bone_handle, trail_handle, foot_slip_handle
+        nonlocal trail_handle, foot_slip_handle
         for item in robot_handles:
             item.handle.remove()
         for item in ghost_sets:
@@ -1072,20 +1581,20 @@ def main() -> None:
         for states in marker_handles:
             for handle in states.values():
                 handle.remove()
-        if bone_handle is not None:
-            bone_handle.remove()
+        remove_bone_handles()
+        remove_correspondence_handles()
         if trail_handle is not None:
             trail_handle.remove()
         if foot_slip_handle is not None:
             foot_slip_handle.remove()
-        bone_handle = None
         trail_handle = None
         foot_slip_handle = None
 
     def rebuild_scene(robot_id: str, pkl_value: str, xml_value: str | None) -> None:
         nonlocal model, data, joint_qpos, motion, anchor_root, n_frames
         nonlocal robot_handles, ghost_data_slots, ghost_sets
-        nonlocal foot_points, foot_scratch, marker_handles
+        nonlocal foot_points, ee_points, foot_scratch, marker_handles
+        nonlocal camera_position_offset, camera_look_offset
         robot_id = robot_id.strip()
         if not robot_id:
             load_status.content = "Robot ID is empty."
@@ -1114,6 +1623,9 @@ def main() -> None:
                 motion = new_motion
                 anchor_root = new_anchor_root
                 n_frames = int(motion.dof_pos.shape[0])
+                camera_position_offset, camera_look_offset = _compute_camera_offsets()
+                server.initial_camera.position = camera_position_offset
+                server.initial_camera.look_at = camera_look_offset
                 state.frame = 0
                 state.history.clear()
                 _apply_motion_frame(model, data, motion, joint_qpos, state.frame, anchor_root)
@@ -1126,6 +1638,7 @@ def main() -> None:
                     data,
                     mesh_saturation=float(args.mesh_saturation),
                     mesh_value=float(args.mesh_value),
+                    robot_opacity=float(robot_opacity_slider.value),
                 )
                 ghost_data_slots = [mujoco.MjData(model) for _ in range(max_ghost_frames)]
                 ghost_sets = _create_mujoco_ghost_handles(
@@ -1137,6 +1650,8 @@ def main() -> None:
                     int(args.ghost_face_stride),
                 )
                 foot_points = _resolve_foot_points(model, args.foot_points)
+                ee_points = _resolve_ee_points(model, args.ee_points)
+                correspondence_label_md.content = _correspondence_label_text()
                 foot_scratch = mujoco.MjData(model)
                 marker_handles = create_marker_handles(foot_points)
                 if args.foot_contacts:
@@ -1177,10 +1692,66 @@ def main() -> None:
         if int(frame_slider.value) != state.frame:
             set_frame(int(frame_slider.value))
 
+    @follow_camera_cb.on_update
+    def _(_e) -> None:
+        update_follow_camera()
+
+    for _camera_control in (follow_angle_slider, follow_distance_slider, follow_height_slider, follow_look_height_slider):
+        @_camera_control.on_update
+        def _(_e) -> None:
+            update_follow_camera()
+
+    @robot_opacity_slider.on_update
+    def _(_e) -> None:
+        _set_mujoco_handles_opacity(robot_handles, float(robot_opacity_slider.value))
+
     @bone_cb.on_update
     def _(_e) -> None:
         show_bones[0] = bool(bone_cb.value)
         set_frame(state.frame, record_history=False)
+
+    @other_bone_cb.on_update
+    def _(_e) -> None:
+        set_frame(state.frame, record_history=False)
+
+    @correspondence_cb.on_update
+    def _(_e) -> None:
+        show_correspondence_points[0] = bool(correspondence_cb.value)
+        set_frame(state.frame, record_history=False)
+
+    for _bone_control in (
+        bone_root_color,
+        bone_left_arm_color,
+        bone_right_arm_color,
+        bone_left_leg_color,
+        bone_right_leg_color,
+        bone_front_left_leg_color,
+        bone_front_right_leg_color,
+        bone_rear_left_leg_color,
+        bone_rear_right_leg_color,
+        bone_middle_left_leg_color,
+        bone_middle_right_leg_color,
+        bone_manipulator_color,
+        bone_other_color,
+        bone_root_width,
+        bone_limb_width,
+        bone_manipulator_width,
+        bone_other_width,
+    ):
+        @_bone_control.on_update
+        def _(_e) -> None:
+            set_frame(state.frame, record_history=False)
+
+    for _point_control in (
+        point_contact_color,
+        point_ee_color,
+        point_radius_slider,
+        *contact_point_color_controls,
+        *ee_point_color_controls,
+    ):
+        @_point_control.on_update
+        def _(_e) -> None:
+            set_frame(state.frame, record_history=False)
 
     @ghost_cb.on_update
     def _(_e) -> None:
@@ -1246,10 +1817,8 @@ def main() -> None:
         step(1)
 
     # ── Initial camera ────────────────────────────────────────────────────────
-    extent_xy = np.ptp(motion.root_pos[:, :2] - anchor_root[:2], axis=0) if n_frames > 1 else np.ones(2)
-    cam_dist = float(max(2.4, np.linalg.norm(extent_xy) * 0.6 + 2.0))
-    server.initial_camera.position = np.array([1.8, -cam_dist, 1.35])
-    server.initial_camera.look_at = np.array([0.0, 0.0, 0.55])
+    server.initial_camera.position = camera_position_offset
+    server.initial_camera.look_at = camera_look_offset
     server.initial_camera.fov = np.deg2rad(34.0)
 
     set_frame(state.frame, record_history=False)

@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="X-Morph: Human Motion Priors for Scalable Robot Learning Across Morphologies">
+    <title>X-Morph</title>
+    <link rel="stylesheet" href="static/css/styles.css">
+  </head>
+  <body>
+    <header class="hero" id="top">
+      <div class="hero-video placeholder-video" aria-label="Header video placeholder">
+        <div class="scanline"></div>
+        <div class="placeholder-content">
+          <span class="eyebrow">Header video placeholder</span>
+          <h1>X-Morph</h1>
+          <p>Human Motion Priors for Scalable Robot Learning Across Morphologies</p>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="paper-head section">
+        <h2>X-Morph: Human Motion Priors for Scalable Robot Learning Across Morphologies</h2>
+        <div class="authors">
+          <p>
+            <span class="author-name"><strong>Ritwik Sharma</strong><sup>*&dagger;</sup></span>
+            <span class="author-name"><strong>Shivam Sood</strong><sup>*</sup></span>
+            <span class="author-name"><strong>Arhaan Jain</strong></span>
+          </p>
+          <p>
+            <span class="author-name"><strong>Shyam Charan Kesavamoorthi</strong></span>
+            <span class="author-name"><strong>Chenyang He</strong></span>
+            <span class="author-name"><strong>Guillaume Adrien Sartoretti</strong></span>
+          </p>
+        </div>
+        <p class="affiliations">
+          National University of Singapore
+        </p>
+        <p class="author-notes">
+          <sup>*</sup>Equal contribution &nbsp;&nbsp; <sup>&dagger;</sup>Corresponding author
+        </p>
+        <div class="button-row" aria-label="Project links">
+          <a class="pill-button disabled" href="#" aria-disabled="true">Paper</a>
+          <a class="pill-button disabled" href="#" aria-disabled="true">arXiv</a>
+          <a class="pill-button disabled" href="#" aria-disabled="true">Code</a>
+          <a class="pill-button disabled" href="#" aria-disabled="true">Video</a>
+        </div>
+      </section>
+
+      <nav class="sticky-nav" aria-label="Page sections">
+        <a href="#abstract">Abstract</a>
+        <a href="#teaser">Overview</a>
+        <a href="#demo">Interactive Demo</a>
+        <a href="#skills">Skills</a>
+        <a href="#tasks">Tasks</a>
+        <a href="#kimodo">Kimodo</a>
+        <a href="#generalization">Generalization</a>
+        <a href="#bibtex">BibTeX</a>
+      </nav>
+
+      <section class="section narrow" id="abstract">
+        <h2>Abstract</h2>
+        <p>
+          Recent progress in humanoid behavior models has been driven in large part by abundant
+          human motion data, but comparable motion data is scarce for non-humanoid legged robots
+          such as quadrupeds, hexapods, and quadruped manipulators. A promising alternative is to
+          repurpose human motion across embodiments; however, direct retargeting often produces
+          motions that are visually plausible yet physically inconsistent or difficult to track under
+          robot dynamics.
+        </p>
+        <p>
+          We present X-Morph, a human-motion-to-robot-behavior pipeline that converts human motion
+          into deployable locomotion and loco-manipulation policies for diverse non-humanoid legged
+          morphologies. A cross-morphology retargeting stage converts human motions into
+          kinematically plausible, intent-preserving robot references, which are then tracked by a
+          privileged RL policy and distilled into a causal student policy.
+        </p>
+        <p>
+          We evaluate X-Morph on three morphologically distinct platforms: a quadruped, a hexapod,
+          and a quadruped equipped with a manipulator. The resulting policies track diverse
+          retargeted motions, generalize to unseen human motions, and support downstream use cases
+          including video-based teleoperation, behavior-prior control, and text-conditioned motion
+          generation. These results suggest that large-scale human motion can serve as a substrate
+          for learning broad, reusable behavior priors beyond humanoid robots.
+        </p>
+      </section>
+
+      <section class="section" id="teaser">
+        <div class="section-title">
+          <p class="eyebrow">Pipeline Overview</p>
+          <h2>Human motion as a prior for robot behaviour</h2>
+        </div>
+        <div class="feature-stack">
+          <article class="feature-card large">
+            <div class="placeholder-video teaser-video">
+              <div class="placeholder-content">
+                <span class="eyebrow">Coolest demo video</span>
+                <h3>Video teleoperation, retargeting, and tracking</h3>
+              </div>
+            </div>
+          </article>
+          <article class="feature-card large">
+            <div class="figure-frame">
+              <img src="static/images/framework.png" alt="X-Morph framework diagram">
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" id="demo">
+        <div class="coming-soon">
+          <div>
+            <p class="eyebrow">Live Interactive Demo</p>
+            <h2>Coming soon</h2>
+            <p>
+              A browser-based demo will let visitors explore source motions, target morphologies,
+              and retargeted robot references interactively.
+            </p>
+          </div>
+          <div class="demo-panel">
+            <span class="demo-dot"></span>
+            <span class="demo-dot"></span>
+            <span class="demo-dot"></span>
+            <div class="demo-screen">Interactive X-Morph viewer placeholder</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="skills">
+        <div class="section-title">
+          <p class="eyebrow">Skills</p>
+          <h2>Locomotion skills from real-time human motion</h2>
+          <p>
+            The same reference interface supports multiple non-humanoid morphologies and hardware
+            behaviors.
+          </p>
+        </div>
+        <div class="video-grid three">
+          <article class="media-card">
+            <div class="placeholder-video video-card"><span>Walk</span></div>
+            <h3>Walk</h3>
+          </article>
+          <article class="media-card">
+            <div class="placeholder-video video-card"><span>Turn</span></div>
+            <h3>Turn</h3>
+          </article>
+          <article class="media-card">
+            <div class="placeholder-video video-card"><span>Squat</span></div>
+            <h3>Squat</h3>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" id="tasks">
+        <div class="section-title">
+          <p class="eyebrow">Object Interaction</p>
+          <h2>Loco-manipulation and downstream tasks</h2>
+          <p>
+            Retargeted human interaction motions can initialize structured robot trials for later
+            downstream learning.
+          </p>
+        </div>
+        <div class="video-grid three">
+          <article class="media-card">
+            <div class="placeholder-video video-wide"><span>Move obstacle</span></div>
+            <h3>Moving an obstacle out of the way</h3>
+          </article>
+          <article class="media-card">
+            <div class="placeholder-video video-wide"><span>Push object</span></div>
+            <h3>Pushing an object</h3>
+          </article>
+          <article class="media-card">
+            <div class="placeholder-video video-wide"><span>Lift object</span></div>
+            <h3>Lifting an object</h3>
+          </article>
+          <article class="media-card downstream-card">
+            <div class="paired-panel">
+              <div class="placeholder-video video-wide"><span>Retargeted reference</span></div>
+              <div class="placeholder-video video-wide"><span>Trained policy</span></div>
+            </div>
+            <h3>Downstream door opening</h3>
+          </article>
+        </div>
+      </section>
+
+      <section class="section split" id="kimodo">
+        <div class="copy-block">
+          <p class="eyebrow">Text-Conditioned Motions</p>
+          <h2>Text-conditioned robot behaviour transfer</h2>
+          <p>
+            Text prompts are converted into G1 motions with Kimodo, then retargeted by X-Morph
+            into robot references and executed with the same tracking policy stack.
+          </p>
+        </div>
+        <article class="media-card">
+          <div class="placeholder-video video-wide"><span>Kimodo demo</span></div>
+          <h3>Text prompt to robot behavior</h3>
+        </article>
+      </section>
+
+      <section class="section" id="generalization">
+        <div class="section-title">
+          <p class="eyebrow">Generalization</p>
+          <h2>Retargeting beyond the exact demonstrations</h2>
+        </div>
+        <div class="video-grid two">
+          <article class="media-card">
+            <div class="placeholder-video video-card"><span>Right paw</span></div>
+            <h3>Right-paw manipulation</h3>
+            <p>Go2 manipulation generalizes beyond left-paw-only target demonstrations.</p>
+          </article>
+          <article class="media-card">
+            <div class="placeholder-video video-card"><span>Yuna reach</span></div>
+            <h3>Wide front-leg motions</h3>
+            <p>Yuna produces broader manipulation motions than the narrow target dataset.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section narrow" id="bibtex">
+        <h2>BibTeX</h2>
+        <p class="muted">Citation will be updated after the paper link is available.</p>
+        <div class="bibtex-box">
+          <button class="copy-button" data-copy-target="bibtex-code">Copy</button>
+          <pre id="bibtex-code"><code>@article{xmorph2026,
+  title   = {X-Morph: Human Motion Priors for Scalable Robot Learning Across Morphologies},
+  author  = {},
+  journal = {},
+  year    = {2026}
+}</code></pre>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>X-Morph &middot; Human motion priors for non-humanoid robot learning.</p>
+      <a href="#top">Back to top</a>
+    </footer>
+
+    <script src="static/js/main.js"></script>
+  </body>
+</html>

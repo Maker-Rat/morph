@@ -5,9 +5,27 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content="X-Morph: Human Motion Priors for Scalable Robot Learning Across Morphologies">
     <title>X-Morph</title>
+    <script>
+      (() => {
+        try {
+          const savedTheme = localStorage.getItem("xmorph-theme");
+          const systemTheme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+          document.documentElement.dataset.theme = savedTheme || systemTheme;
+        } catch (error) {
+          document.documentElement.dataset.theme = "light";
+        }
+      })();
+    </script>
     <link rel="stylesheet" href="static/css/styles.css">
   </head>
   <body>
+    <button class="theme-toggle" type="button" aria-label="Switch color theme" aria-pressed="false">
+      <span class="theme-toggle-track" aria-hidden="true">
+        <span class="theme-toggle-knob"></span>
+      </span>
+      <span class="theme-toggle-label">Dark</span>
+    </button>
+
     <header class="hero" id="top">
       <div class="hero-video media-video" aria-label="Header video">
         <video autoplay muted loop playsinline preload="metadata">
@@ -115,10 +133,6 @@
           <div>
             <p class="eyebrow">Live Interactive Demo</p>
             <h2>Coming soon</h2>
-            <p>
-              A browser-based demo will let visitors explore source motions, target morphologies,
-              and retargeted robot references interactively.
-            </p>
           </div>
           <div class="demo-panel">
             <span class="demo-dot"></span>

@@ -9,10 +9,14 @@
   </head>
   <body>
     <header class="hero" id="top">
-      <div class="hero-video placeholder-video" aria-label="Header video placeholder">
-        <div class="scanline"></div>
+      <div class="hero-video media-video" aria-label="Header video">
+        <video autoplay muted loop playsinline preload="metadata">
+          <source src="static/videos/yuna_gen.mp4" type="video/mp4">
+        </video>
+        <div class="video-shade"></div>
+        <span class="video-badge hero-badge">1x</span>
         <div class="placeholder-content">
-          <span class="eyebrow">Header video placeholder</span>
+          <span class="eyebrow">Live motion transfer</span>
           <h1>X-Morph</h1>
           <p>Human Motion Priors for Scalable Robot Learning Across Morphologies</p>
         </div>
@@ -41,8 +45,8 @@
           <sup>*</sup>Equal contribution &nbsp;&nbsp; <sup>&dagger;</sup>Corresponding author
         </p>
         <div class="button-row" aria-label="Project links">
-          <a class="pill-button disabled" href="#" aria-disabled="true">Paper</a>
-          <a class="pill-button disabled" href="#" aria-disabled="true">arXiv</a>
+          <a class="pill-button" href="https://arxiv.org/pdf/2606.30290" target="_blank" rel="noopener">Paper</a>
+          <a class="pill-button" href="https://arxiv.org/abs/2606.30290" target="_blank" rel="noopener">arXiv</a>
           <a class="pill-button disabled" href="#" aria-disabled="true">Code</a>
           <a class="pill-button disabled" href="#" aria-disabled="true">Video</a>
         </div>
@@ -93,11 +97,11 @@
         </div>
         <div class="feature-stack">
           <article class="feature-card large">
-            <div class="placeholder-video teaser-video">
-              <div class="placeholder-content">
-                <span class="eyebrow">Coolest demo video</span>
-                <h3>Video teleoperation, retargeting, and tracking</h3>
-              </div>
+            <div class="video-shell teaser-video">
+              <video muted loop playsinline controls preload="metadata">
+                <source src="static/videos/cool_demo.mp4" type="video/mp4">
+              </video>
+              <span class="video-badge">4x</span>
             </div>
           </article>
           <article class="feature-card large">
@@ -138,15 +142,30 @@
         </div>
         <div class="video-grid three">
           <article class="media-card">
-            <div class="placeholder-video video-card"><span>Walk</span></div>
+            <div class="video-shell video-card">
+              <video muted loop playsinline controls preload="metadata">
+                <source src="static/videos/walk.mp4" type="video/mp4">
+              </video>
+              <span class="video-badge">1x</span>
+            </div>
             <h3>Walk</h3>
           </article>
           <article class="media-card">
-            <div class="placeholder-video video-card"><span>Turn</span></div>
+            <div class="video-shell video-card">
+              <video muted loop playsinline controls preload="metadata">
+                <source src="static/videos/turn.mp4" type="video/mp4">
+              </video>
+              <span class="video-badge">1x</span>
+            </div>
             <h3>Turn</h3>
           </article>
           <article class="media-card">
-            <div class="placeholder-video video-card"><span>Squat</span></div>
+            <div class="video-shell video-card">
+              <video muted loop playsinline controls preload="metadata">
+                <source src="static/videos/squat.mp4" type="video/mp4">
+              </video>
+              <span class="video-badge">1x</span>
+            </div>
             <h3>Squat</h3>
           </article>
         </div>
@@ -163,21 +182,46 @@
         </div>
         <div class="video-grid three">
           <article class="media-card">
-            <div class="placeholder-video video-wide"><span>Move obstacle</span></div>
+            <div class="video-shell video-wide">
+              <video muted loop playsinline controls preload="metadata">
+                <source src="static/videos/obstacle.mp4" type="video/mp4">
+              </video>
+              <span class="video-badge">1x</span>
+            </div>
             <h3>Moving an obstacle out of the way</h3>
           </article>
           <article class="media-card">
-            <div class="placeholder-video video-wide"><span>Push object</span></div>
+            <div class="video-shell video-wide">
+              <video muted loop playsinline controls preload="metadata">
+                <source src="static/videos/push.mp4" type="video/mp4">
+              </video>
+              <span class="video-badge">1x</span>
+            </div>
             <h3>Pushing an object</h3>
           </article>
           <article class="media-card">
-            <div class="placeholder-video video-wide"><span>Lift object</span></div>
+            <div class="video-shell video-wide">
+              <video muted loop playsinline controls preload="metadata">
+                <source src="static/videos/pick.mp4" type="video/mp4">
+              </video>
+              <span class="video-badge">1x</span>
+            </div>
             <h3>Lifting an object</h3>
           </article>
           <article class="media-card downstream-card">
             <div class="paired-panel">
-              <div class="placeholder-video video-wide"><span>Retargeted reference</span></div>
-              <div class="placeholder-video video-wide"><span>Trained policy</span></div>
+              <div class="video-shell video-wide">
+                <video muted loop playsinline controls preload="metadata">
+                  <source src="static/videos/downstream_retargeted.mp4" type="video/mp4">
+                </video>
+                <span class="video-badge">4x</span>
+              </div>
+              <div class="video-shell video-wide">
+                <video muted loop playsinline controls preload="metadata">
+                  <source src="static/videos/downstream_policy.mp4" type="video/mp4">
+                </video>
+                <span class="video-badge">4x</span>
+              </div>
             </div>
             <h3>Downstream door opening</h3>
           </article>
@@ -194,7 +238,12 @@
           </p>
         </div>
         <article class="media-card">
-          <div class="placeholder-video video-wide"><span>Kimodo demo</span></div>
+          <div class="video-shell video-wide">
+            <video muted loop playsinline controls preload="metadata">
+              <source src="static/videos/kimodo.mp4" type="video/mp4">
+            </video>
+            <span class="video-badge">1x</span>
+          </div>
           <h3>Text prompt to robot behavior</h3>
         </article>
       </section>
@@ -211,7 +260,12 @@
             <p>Go2 manipulation generalizes beyond left-paw-only target demonstrations.</p>
           </article>
           <article class="media-card">
-            <div class="placeholder-video video-card"><span>Yuna reach</span></div>
+            <div class="video-shell video-card">
+              <video muted loop playsinline controls preload="metadata">
+                <source src="static/videos/yuna_gen.mp4" type="video/mp4">
+              </video>
+              <span class="video-badge">1x</span>
+            </div>
             <h3>Wide front-leg motions</h3>
             <p>Yuna produces broader manipulation motions than the narrow target dataset.</p>
           </article>

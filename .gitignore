@@ -52,7 +52,6 @@ correctors/
 # -----------------------------
 # Training / inference artifacts
 # -----------------------------
-runs/
 demo_output/
 outputs/
 checkpoints/

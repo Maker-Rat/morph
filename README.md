@@ -1,5 +1,17 @@
 # X-Morph: Cross-Morphology Motion Retargeting
 
+<p align="center">
+  <a href="https://maker-rat.github.io/morph/">
+    <img src="docs/static/images/framework.png" alt="X-Morph framework" width="100%">
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://maker-rat.github.io/morph/"><strong>Project Page</strong></a>
+  &nbsp;|&nbsp;
+  <a href="https://arxiv.org/abs/2606.30290"><strong>Paper</strong></a>
+</p>
+
 X-Morph learns deployable motion references for robots whose morphology differs substantially from a human. This repository contains the retargeting teacher, offline physics corrector, and causal student used for G1-to-Go2, G1-to-Yuna hexapod, and G1-to-B2--Z1 quadruped-manipulator transfer. The commands below use **G1 humanoid -> Go2 quadruped locomotion** as the minimal running example; the same pipeline is configured for the other targets under `configs/`.
 
 The usual workflow is:
@@ -26,7 +38,36 @@ The current teacher/corrector pipeline supports both a yaw-only root angular fea
 | Unitree G1 | Unitree B2 + Z1 arm | locomotion, manipulation |
 | Unitree G1 | Go2 with D1 or custom arm | manipulation |
 
-Robot assets, motion data, processed datasets, and pair configurations are included. Trained teacher, corrector, student, and tracking-policy checkpoints are not committed under `runs/` or `correctors/`; train them with the commands below or place separately released checkpoints in those directories.
+Robot assets, motion data, processed datasets, pair configurations, and the
+trained X-Morph teacher, corrector, and causal-student runs are included. The
+downstream robot tracking policies are maintained in their respective control
+repositories and are not part of this repository.
+
+## Pretrained Runs
+
+The released checkpoints are stored under [`runs/`](runs/). Use the causal
+student's `best.pt` for real-time retargeting. Teachers and correctors implement
+the offline reference-generation and physics-cleaning pipeline used to prepare
+student training data.
+
+| Target | Motion set | Teacher | Corrector | Causal student |
+| --- | --- | --- | --- | --- |
+| Go2 | locomotion | [`teacher_loco_g1_go2`](runs/teacher_loco_g1_go2/) | [`corrector_loco_g1_go2`](runs/corrector_loco_g1_go2/) | [`student_loco_g1_go2/best.pt`](runs/student_loco_g1_go2/best.pt) |
+| Yuna | locomotion | [`teacher_loco_g1_yuna`](runs/teacher_loco_g1_yuna/) | [`corrector_loco_g1_yuna`](runs/corrector_loco_g1_yuna/) | [`student_loco_g1_yuna/best.pt`](runs/student_loco_g1_yuna/best.pt) |
+| Yuna | locomotion + manipulation | [`teacher_mix_g1_yuna`](runs/teacher_mix_g1_yuna/) | [`corrector_mix_g1_yuna`](runs/corrector_mix_g1_yuna/) | [`student_mix_g1_yuna/best.pt`](runs/student_mix_g1_yuna/best.pt) |
+| B2--Z1 | locomotion | [`teacher_loco_g1_b2_z1`](runs/teacher_loco_g1_b2_z1/) | -- | -- |
+| B2--Z1 | locomotion + manipulation | [`teacher_mix_g1_b2_z1`](runs/teacher_mix_g1_b2_z1/) | [`corrector_mix_g1_b2_z1`](runs/corrector_mix_g1_b2_z1/) | [`student_mix_b2_z1/best.pt`](runs/student_mix_b2_z1/best.pt) |
+
+Each student directory also contains its training configuration and paired-data
+metadata. The commands below show how to reproduce the runs from scratch or use
+the released checkpoints directly.
+
+To keep the repository compact, each teacher includes only its final inference
+snapshot (`1800` for Go2 locomotion, `2200` for B2--Z1 locomotion, `3000` for
+Yuna locomotion and B2--Z1 mixed motion, and `2600` for Yuna mixed motion).
+Student and corrector directories retain `best.pt` and `last.pt`. Optimizer
+histories and training logs are intentionally omitted; the released teacher
+runs support inference, but not resuming their original training sessions.
 
 ## Environment Setup
 
@@ -35,12 +76,19 @@ Clone the repository and create a Python 3.10 environment:
 ```bash
 git clone https://github.com/Maker-Rat/morph.git
 cd morph
+export XMORPH_ROOT="$(pwd)"
 conda create -n morph python=3.10 -y
 conda activate morph
 pip install -e .
 ```
 
 This installs the package metadata name `morph`. The runtime module namespace is `csmt`, so commands use `python -m csmt....`.
+
+`XMORPH_ROOT` is the global path used by released run metadata. Set it to the
+repository root in each new shell, or add the export above to your shell
+configuration. When it is unset, X-Morph infers the root from the installed
+`csmt` package. Paths stored as `${XMORPH_ROOT}/...` are expanded automatically
+when run metadata is loaded.
 
 If you need CUDA-specific PyTorch wheels, reinstall `torch` after this step using the official PyTorch command for your CUDA version.
 
@@ -55,6 +103,7 @@ If you need CUDA-specific PyTorch wheels, reinstall `torch` after this step usin
 - `src/csmt/pipelines/`: dataset, training, inference, visualization utilities
 - `data/raw/`, `data/student/`: robot motion data and paired student-training clips
 - `data/processed/`: precomputed windowed datasets and normalization statistics
+- `runs/`: released teacher, physics-corrector, and causal-student checkpoints
 
 ## 1) Robot And Pair Setup
 
@@ -382,7 +431,7 @@ python -m csmt.pipelines.train_student \
   --pair-id g1_to_go2 \
   --src-pkl-dir ./data/student/loco_g1_go2/g1 \
   --dst-pkl-dir ./data/student/loco_g1_go2/go2 \
-  --save-dir ./runs/student_rt_g1_go2 \
+  --save-dir ./runs/student_loco_g1_go2 \
   --device cuda:0 \
   --epochs 25 \
   --batch-size 256
@@ -412,7 +461,7 @@ python -m csmt.pipelines.infer_student_rt \
   --processed-dir ./data/processed/loco_g1_go2 \
   --task-family locomotion \
   --pair-id g1_to_go2 \
-  --student-ckpt ./runs/student_rt_g1_go2/best.pt \
+  --student-ckpt ./runs/student_loco_g1_go2/best.pt \
   --input-pkl ./data/student/loco_g1_go2/g1/walk1_subject1.pkl \
   --output-pkl ./demo_output/student_rt_go2.pkl \
   --device cuda:0 \

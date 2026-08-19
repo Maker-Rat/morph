@@ -8,6 +8,7 @@ import shlex
 import yaml
 import numpy as np
 
+from csmt.core.paths import make_xmorph_paths_portable
 from csmt.pipelines._legacy_pan_train import build_legacy_default_args, run_pan_training
 from csmt.robots.registry import load_robot_spec
 from csmt.tasks.registry import resolve_task_config
@@ -296,6 +297,7 @@ def main() -> None:
         "loss_weights": resolved.loss_weights,
         "legacy_args": args_dict,
     }
+    run_snapshot = make_xmorph_paths_portable(run_snapshot, output_root)
     with (save_dir / "refactor_teacher_run.json").open("w", encoding="utf-8") as f:
         json.dump(run_snapshot, f, indent=2)
 
@@ -322,7 +324,10 @@ def main() -> None:
     ])
     if cli.processed_dir is not None:
         cmd_preview += " " + " ".join(shlex.quote(x) for x in ["--processed-dir", cli.processed_dir])
-    run_pan_training(args_dict, para_cmd=cmd_preview)
+    run_pan_training(
+        args_dict,
+        para_cmd=make_xmorph_paths_portable(cmd_preview, output_root),
+    )
 
 
 if __name__ == "__main__":

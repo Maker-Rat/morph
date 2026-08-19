@@ -1,0 +1,1 @@
+python -m csmt.pipelines.train_teacher --output-root ${XMORPH_ROOT} --task-family manipulation --pair-id g1_to_yuna_mix --save-dir ${XMORPH_ROOT}/runs/teacher_mix_g1_yuna_slow_v4 --processed-dir ./data/processed/mix_g1_yuna_slow/

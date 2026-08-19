@@ -15,6 +15,7 @@ import torch
 import torch.nn as nn
 import yaml
 
+from csmt.core.paths import make_xmorph_paths_portable
 from csmt.models import create_model
 from csmt.models.motion_corrector import MotionCorrector
 from csmt.parser.base import dict_to_object, try_mkdir
@@ -899,6 +900,7 @@ def main() -> None:
         **{k: (float(v) if isinstance(v, np.floating) else v) for k, v in params.items()},
         "use_source_contact_gate": bool(cli.use_source_contact_gate),
     }
+    run_cfg = make_xmorph_paths_portable(run_cfg, output_root)
     with (save_dir / "corrector_run.json").open("w", encoding="utf-8") as f:
         json.dump(run_cfg, f, indent=2)
 

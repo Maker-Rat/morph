@@ -1,0 +1,1 @@
+python -m csmt.pipelines.train_teacher --output-root ${XMORPH_ROOT} --task-family locomotion --pair-id g1_to_yuna --save-dir ${XMORPH_ROOT}/runs/teacher_loco_g1_yuna_v3 --processed-dir ./data/processed/loco_g1_yuna/

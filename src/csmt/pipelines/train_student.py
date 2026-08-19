@@ -14,6 +14,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 import yaml
 
+from csmt.core.paths import make_xmorph_paths_portable
 from csmt.models.student_rt import StudentRT
 from csmt.parser.base import try_mkdir
 from csmt.robots.registry import load_robot_spec
@@ -691,8 +692,9 @@ def main():
     try_mkdir(str(save_dir))
 
     train_ds, val_ds, meta, src_stats, dst_stats, dst_robot = _build_datasets(params, output_root, cli.seed)
+    portable_meta = make_xmorph_paths_portable(meta, output_root)
     with (save_dir / "paired_pkl_meta.json").open("w", encoding="utf-8") as f:
-        json.dump(meta, f, indent=2)
+        json.dump(portable_meta, f, indent=2)
 
     x0, y0, yt0 = train_ds[0]
     src_njoints = int(src_stats.njoints)
@@ -754,8 +756,9 @@ def main():
         "dst_njoints": int(dst_njoints),
         "hist_len": int(x0.shape[0]),
         "prev_len": int(y0.shape[0]),
-        "paired_pkl_meta": meta,
+        "paired_pkl_meta": portable_meta,
     }
+    config = make_xmorph_paths_portable(config, output_root)
     with (save_dir / "student_config.json").open("w", encoding="utf-8") as f:
         json.dump(config, f, indent=2)
 

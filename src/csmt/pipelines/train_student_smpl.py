@@ -13,6 +13,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 import yaml
 
+from csmt.core.paths import make_xmorph_paths_portable
 from csmt.models.student_rt import StudentRT
 from csmt.parser.base import try_mkdir
 from csmt.robots.registry import load_robot_spec
@@ -668,8 +669,9 @@ def main() -> None:
         "balanced_sampling": bool(params["balanced_sampling"]),
         "samples_per_epoch": int(params["samples_per_epoch"]),
     })
+    portable_meta = make_xmorph_paths_portable(meta, output_root)
     with (save_dir / "paired_smpl_meta.json").open("w", encoding="utf-8") as f:
-        json.dump(meta, f, indent=2)
+        json.dump(portable_meta, f, indent=2)
     np.savez_compressed(save_dir / "smpl_input_stats.npz", smpl_mean=smpl_mean, smpl_std=smpl_std, src_dim=np.asarray([SMPL_INPUT_DIM], dtype=np.int32))
 
     x0, y0, yt0, _ = train_ds[0]
@@ -694,7 +696,8 @@ def main() -> None:
     dst_root_std = np.maximum(dst_stats.std[-4:].detach().cpu().numpy().astype(np.float32), 1e-8)
     dst_root_mean_t = torch.from_numpy(dst_root_mean).to(device)
     dst_root_std_t = torch.from_numpy(dst_root_std).to(device)
-    config = {**params, "distill_source": "paired_smpl_dst_pkl", "src_dim": src_dim, "dst_dim": dst_dim, "dst_njoints": int(dst_njoints), "hist_len": int(x0.shape[0]), "prev_len": int(y0.shape[0]), "predict_residual": False, "smpl_input_dim": SMPL_INPUT_DIM, "smpl_input_stats_path": str(save_dir / "smpl_input_stats.npz"), "smpl_input_mean": smpl_mean.tolist(), "smpl_input_std": smpl_std.tolist(), "dst_root_mean": dst_root_mean.tolist(), "dst_root_std": dst_root_std.tolist(), "paired_smpl_meta": meta}
+    config = {**params, "distill_source": "paired_smpl_dst_pkl", "src_dim": src_dim, "dst_dim": dst_dim, "dst_njoints": int(dst_njoints), "hist_len": int(x0.shape[0]), "prev_len": int(y0.shape[0]), "predict_residual": False, "smpl_input_dim": SMPL_INPUT_DIM, "smpl_input_stats_path": str(save_dir / "smpl_input_stats.npz"), "smpl_input_mean": smpl_mean.tolist(), "smpl_input_std": smpl_std.tolist(), "dst_root_mean": dst_root_mean.tolist(), "dst_root_std": dst_root_std.tolist(), "paired_smpl_meta": portable_meta}
+    config = make_xmorph_paths_portable(config, output_root)
     with (save_dir / "student_config.json").open("w", encoding="utf-8") as f:
         json.dump(config, f, indent=2)
     wandb_run = None

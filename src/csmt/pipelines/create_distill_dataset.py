@@ -13,6 +13,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from csmt.data.datasetserial import DstDataset, SrcDataset
+from csmt.core.paths import expand_xmorph_paths
 from csmt.models import create_model
 from csmt.parser.base import (
     dict_to_object,
@@ -29,7 +30,7 @@ def load_teacher_args(teacher_dir: str) -> dict:
             "please use a teacher run created via the refactor trainer."
         )
     with run_json.open("r", encoding="utf-8") as f:
-        payload = json.load(f)
+        payload = expand_xmorph_paths(json.load(f))
     args = dict(payload.get("legacy_args", {}))
     if len(args) == 0:
         raise RuntimeError(f"{run_json} found but legacy_args is empty")

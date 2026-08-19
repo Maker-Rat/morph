@@ -1,6 +1,6 @@
-# MORPH: Cross-Morphology Motion Retargeting
+# X-Morph: Cross-Morphology Motion Retargeting
 
-MORPH is a standalone codebase for learning and running cross-morphology motion retargeting. The current primary example in this repo is **G1 humanoid -> Go2 quadruped locomotion**.
+X-Morph learns deployable motion references for robots whose morphology differs substantially from a human. This repository contains the retargeting teacher, offline physics corrector, and causal student used for G1-to-Go2, G1-to-Yuna hexapod, and G1-to-B2--Z1 quadruped-manipulator transfer. The commands below use **G1 humanoid -> Go2 quadruped locomotion** as the minimal running example; the same pipeline is configured for the other targets under `configs/`.
 
 The usual workflow is:
 
@@ -8,17 +8,33 @@ The usual workflow is:
 G1 PKLs + Go2 PKLs -> processed stats/windows -> teacher
 G1 PKLs -> teacher -> corrector/skate-comp -> cleaned Go2 PKLs
 paired G1 PKLs + cleaned Go2 PKLs -> RT student
-paired SMPL motions + cleaned Go2 PKLs -> SMPL student
 ```
 
-The current student pipelines are direct paired-data pipelines. They train on final target PKLs and do **not** require precomputed distillation shard NPZs.
-The current teacher/corrector pipeline supports both legacy yaw-only root angular features and the newer rpy/body-angular-velocity representation.
+The current teacher/corrector pipeline supports both a yaw-only root angular features and a newer rpy/body-angular-velocity representation.
+
+## Related Repositories
+
+- [`kimodo_morph`](https://github.com/Maker-Rat/kimodo_morph): text-conditioned G1 generation followed by X-Morph retargeting
+- [`video2morph`](https://github.com/Maker-Rat/video2morph): real-time monocular video-to-X-Morph reference publishing
+
+## Supported Configurations
+
+| Source | Target | Task configurations |
+| --- | --- | --- |
+| Unitree G1 | Unitree Go2 | locomotion, manipulation |
+| Unitree G1 | Yuna hexapod | locomotion, mixed locomotion/manipulation |
+| Unitree G1 | Unitree B2 + Z1 arm | locomotion, manipulation |
+| Unitree G1 | Go2 with D1 or custom arm | manipulation |
+
+Robot assets, motion data, processed datasets, and pair configurations are included. Trained teacher, corrector, student, and tracking-policy checkpoints are not committed under `runs/` or `correctors/`; train them with the commands below or place separately released checkpoints in those directories.
 
 ## Environment Setup
 
-From repository root:
+Clone the repository and create a Python 3.10 environment:
 
 ```bash
+git clone https://github.com/Maker-Rat/morph.git
+cd morph
 conda create -n morph python=3.10 -y
 conda activate morph
 pip install -e .
@@ -37,6 +53,8 @@ If you need CUDA-specific PyTorch wheels, reinstall `torch` after this step usin
 - `configs/tasks/<family>/pairs/*.yaml`: pair-specific correspondences and losses
 - `configs/models/*.yaml`: teacher, corrector, and student model configs
 - `src/csmt/pipelines/`: dataset, training, inference, visualization utilities
+- `data/raw/`, `data/student/`: robot motion data and paired student-training clips
+- `data/processed/`: precomputed windowed datasets and normalization statistics
 
 ## 1) Robot And Pair Setup
 
@@ -478,3 +496,36 @@ python -m csmt.pipelines.infer_student_smpl \
   --target-fps 30 \
   --dst-start-height 0.28
 ```
+
+## License
+
+The X-Morph software is released under the [Apache License 2.0](LICENSE).
+Third-party datasets, model assets, and upstream software retain their original
+licenses and are not relicensed under Apache-2.0.
+
+## Data and Upstream Acknowledgements
+
+X-Morph uses or builds upon the following motion-data and retargeting resources:
+
+- [AMASS: Archive of Motion Capture as Surface Shapes](https://amass.is.tue.mpg.de/)
+  provides human motion represented with SMPL-family body models. AMASS and its
+  constituent datasets remain subject to their respective original terms.
+- [LAFAN1](https://github.com/ubisoft/ubisoft-laforge-animation-dataset),
+  introduced with *Robust Motion In-betweening*, provides human animation data
+  under the
+  [CC BY-NC-ND 4.0 license](https://github.com/ubisoft/ubisoft-laforge-animation-dataset/blob/master/license.txt).
+- Go2 reference motions were sourced in part from
+  [Learning Robot Locomotion from Diverse Datasets](https://github.com/luliuxxx/LearnDiverseQuadLoco).
+- Additional Go2 reference motions were sourced from
+  [RAMBO: RL-augmented Model-based Whole-body Control for Loco-manipulation](https://github.com/catachiii/rambo),
+  whose repository is released under
+  [CC BY-NC 4.0](https://github.com/catachiii/rambo#license).
+- [OmniRetarget](https://omniretarget.github.io/) is acknowledged as a source of
+  interaction-preserving humanoid retargeting data and methodology.
+- [GMR: General Motion Retargeting](https://github.com/YanjieZe/GMR) is
+  acknowledged for the humanoid motion-retargeting pipeline used in preparing
+  source motions.
+
+Please cite the corresponding original works when using data or components
+derived from these projects. The repository does not grant redistribution
+rights beyond those provided by each original source.

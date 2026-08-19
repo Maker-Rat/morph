@@ -1,9 +1,9 @@
 {
   "robot": {
     "robot_id": "g1",
-    "stats_path": "/home/piakchu/Ritwik/morph/data/processed/loco_g1_yuna/g1_stats.npz",
-    "train_path": "/home/piakchu/Ritwik/morph/data/processed/loco_g1_yuna/g1_train.npz",
-    "test_path": "/home/piakchu/Ritwik/morph/data/processed/loco_g1_yuna/g1_test.npz",
+    "stats_path": "g1_stats.npz",
+    "train_path": "g1_train.npz",
+    "test_path": "g1_test.npz",
     "total_windows": 645,
     "train_windows": 516,
     "test_windows": 129

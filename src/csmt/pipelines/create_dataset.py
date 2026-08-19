@@ -656,9 +656,11 @@ def _create_robot_dataset(
 
     return {
         "robot_id": robot_id,
-        "stats_path": str(stats_path),
-        "train_path": str(train_path),
-        "test_path": str(test_path),
+        # Metadata lives beside these artifacts.  Store portable names rather
+        # than leaking the absolute path of the machine that built the dataset.
+        "stats_path": stats_path.name,
+        "train_path": train_path.name,
+        "test_path": test_path.name,
         "total_windows": int(len(all_data["joint_pos"])),
         "train_windows": int(len(train_data["joint_pos"])),
         "test_windows": int(len(test_data["joint_pos"])),

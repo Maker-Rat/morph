@@ -1,9 +1,9 @@
 {
   "robot": {
     "robot_id": "b2_z1",
-    "stats_path": "/home/psyduck/Ritwik/morph/data/processed/loco_g1_b2_z1/b2_z1_stats.npz",
-    "train_path": "/home/psyduck/Ritwik/morph/data/processed/loco_g1_b2_z1/b2_z1_train.npz",
-    "test_path": "/home/psyduck/Ritwik/morph/data/processed/loco_g1_b2_z1/b2_z1_test.npz",
+    "stats_path": "b2_z1_stats.npz",
+    "train_path": "b2_z1_train.npz",
+    "test_path": "b2_z1_test.npz",
     "total_windows": 470,
     "train_windows": 376,
     "test_windows": 94

@@ -75,3 +75,6 @@ temp/
 # *.avi
 g1_test_motions/
 pkl_*.py
+
+# Private evaluation/rebuttal utilities and artifacts (not part of the release)
+eval_scripts/

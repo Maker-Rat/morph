@@ -1,9 +1,9 @@
 {
   "robot": {
     "robot_id": "yuna",
-    "stats_path": "/media/marmot/606de469-2f76-4155-82bc-e2e657636ad7/Ritwik/morph/data/processed/mix_g1_yuna/yuna_stats.npz",
-    "train_path": "/media/marmot/606de469-2f76-4155-82bc-e2e657636ad7/Ritwik/morph/data/processed/mix_g1_yuna/yuna_train.npz",
-    "test_path": "/media/marmot/606de469-2f76-4155-82bc-e2e657636ad7/Ritwik/morph/data/processed/mix_g1_yuna/yuna_test.npz",
+    "stats_path": "yuna_stats.npz",
+    "train_path": "yuna_train.npz",
+    "test_path": "yuna_test.npz",
     "total_windows": 1413,
     "train_windows": 1130,
     "test_windows": 283
